@@ -930,3 +930,155 @@ canvas {
   100% { background: rgba(255, 0, 60, 0.12); box-shadow: inset 0 0 100px rgba(255, 0, 60, 0.35); }
 }
 
+/* Responsive adjustments for mobile screens */
+@media (max-width: 768px) {
+  #menu-screen, #game-over-screen, #level-up-screen {
+    justify-content: flex-start;
+    overflow-y: auto;
+    padding: 30px 15px;
+  }
+
+  .title-glow {
+    font-size: 2.8rem;
+    letter-spacing: 3px;
+  }
+  
+  .subtitle-glow {
+    font-size: 1.1rem;
+    letter-spacing: 6px;
+    margin-bottom: 20px;
+  }
+  
+  .btn-primary {
+    font-size: 1rem;
+    padding: 12px 30px;
+  }
+  
+  .instructions {
+    margin-top: 15px;
+    font-size: 0.75rem;
+    max-width: 95%;
+    padding: 8px;
+  }
+  
+  .glass-panel {
+    border-radius: 0px;
+    width: 100%;
+    max-height: 100%;
+  }
+  
+  /* HUD scale down */
+  .hud-top {
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: space-around;
+  }
+  
+  .hud-group {
+    align-items: center;
+  }
+  
+  .hud-value-orbitron {
+    font-size: 1.1rem;
+  }
+  
+  .bar-wrapper {
+    width: 80px;
+    height: 10px;
+  }
+  
+  #combo-container {
+    top: 140px;
+    right: 15px;
+  }
+  
+  .combo-count {
+    font-size: 2.2rem;
+  }
+  
+  .combo-text {
+    font-size: 0.75rem;
+    letter-spacing: 1px;
+  }
+  
+  #boss-hud {
+    top: 140px;
+    width: 260px;
+  }
+  
+  .boss-name {
+    font-size: 0.75rem;
+    letter-spacing: 2px;
+  }
+  
+  .boss-bar-wrapper {
+    height: 12px;
+  }
+  
+  .level-up-title {
+    font-size: 2rem;
+    letter-spacing: 3px;
+  }
+  
+  .level-up-subtitle {
+    font-size: 0.85rem;
+    margin-bottom: 20px;
+    text-align: center;
+  }
+  
+  .card-container {
+    flex-direction: column;
+    gap: 12px;
+    width: 95%;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  
+  .upgrade-card {
+    padding: 12px 15px;
+    flex-direction: row;
+    align-items: center;
+    text-align: left;
+  }
+  
+  .card-icon {
+    font-size: 1.6rem;
+    margin-bottom: 0;
+    margin-right: 15px;
+  }
+  
+  .card-title {
+    font-size: 0.95rem;
+    margin-bottom: 2px;
+  }
+  
+  .card-level {
+    font-size: 0.7rem;
+    margin-bottom: 0;
+    margin-right: 10px;
+    padding: 1px 6px;
+  }
+  
+  .card-desc {
+    font-size: 0.75rem;
+  }
+  
+  .game-over-title {
+    font-size: 2.6rem;
+  }
+  
+  .score-summary {
+    gap: 15px;
+    margin-bottom: 25px;
+  }
+  
+  .summary-card {
+    padding: 10px 15px;
+  }
+  
+  .summary-score {
+    font-size: 1.25rem;
+  }
+}
+
+

@@ -558,6 +558,7 @@ class Shockwave {
     this.color = color;
     this.active = true;
     this.speed = 4.5;
+    this.hitTargets = new Set();
   }
 
   update(dt) {
@@ -785,21 +786,32 @@ class HexEnemy extends BaseEnemy {
     super(x, y, type);
     if (type === 'basic') {
       this.radius = 16;
-      this.speed = 2.4;
+      this.speed = 2.8;
       this.hp = 1;
       this.color = '#00f3ff';
+      this.baseColor = '#00f3ff';
       this.scoreVal = 100;
+      this.isCharging = false;
+      this.chargeTimer = 0;
+      this.chargeCooldown = 0;
     } else { // heavy
       this.radius = 28;
       this.speed = 0.9;
-      this.hp = 6;
+      this.hp = 14;
       this.color = '#ffe600';
+      this.baseColor = '#ffe600';
       this.scoreVal = 500;
+      this.isCharging = false;
+      this.chargeTimer = 0;
+      this.shootTimer = Math.random() * 2000; // staggered spawn offsets
     }
   }
 
   update(px, py, dt, gameTime, onShoot) {
     if (this.sliced) { this.sliceTimer += dt; return; }
+    
+    // Reset color to base color
+    this.color = this.baseColor;
     
     this.x += this.vx * dt;
     this.y += this.vy * dt;
@@ -811,9 +823,69 @@ class HexEnemy extends BaseEnemy {
     const dy = py - this.y;
     const dist = Math.hypot(dx, dy);
 
-    if (dist > 0) {
-      this.x += (dx / dist) * this.speed * dt;
-      this.y += (dy / dist) * this.speed * dt;
+    if (this.type === 'basic') {
+      if (this.chargeCooldown > 0) {
+        this.chargeCooldown -= 16.6 * dt;
+      }
+      
+      if (this.isCharging) {
+        this.chargeTimer += 16.6 * dt;
+        // Blink red/cyan during charge
+        this.color = (Math.floor(this.chargeTimer / 80) % 2 === 0) ? '#ff0055' : this.baseColor;
+        this.scaleX = 1.25; this.scaleY = 0.75; // squash down
+        
+        if (this.chargeTimer >= 450) {
+          this.isCharging = false;
+          this.chargeCooldown = 2500; // 2.5s cooldown before charging again
+          const angle = Math.atan2(dy, dx);
+          this.vx = Math.cos(angle) * 11.5;
+          this.vy = Math.sin(angle) * 11.5;
+          this.scaleX = 0.55; this.scaleY = 1.45; // stretch forward
+          window.audio.playSe('se_dash');
+        }
+      } else {
+        if (dist < 180 && this.chargeCooldown <= 0) {
+          this.isCharging = true;
+          this.chargeTimer = 0;
+          this.vx = 0;
+          this.vy = 0;
+        } else if (dist > 0) {
+          this.x += (dx / dist) * this.speed * dt;
+          this.y += (dy / dist) * this.speed * dt;
+        }
+      }
+    } else { // heavy
+      if (this.isCharging) {
+        this.chargeTimer += 16.6 * dt;
+        // Blink orange/yellow during charge
+        this.color = (Math.floor(this.chargeTimer / 80) % 2 === 0) ? '#ff9900' : this.baseColor;
+        this.scaleX = 0.85; this.scaleY = 1.15;
+        
+        if (this.chargeTimer >= 1200) {
+          this.isCharging = false;
+          this.shootTimer = 0;
+          
+          // Fire 3-way aimed spread
+          const angle = Math.atan2(dy, dx);
+          onShoot(this.x, this.y, angle);
+          onShoot(this.x, this.y, angle - 0.2);
+          onShoot(this.x, this.y, angle + 0.2);
+          window.audio.playSe('se_dash'); // firing sound
+          
+          this.scaleX = 1.35; this.scaleY = 0.65; // huge recoil squash
+        }
+      } else {
+        this.shootTimer += 16.6 * dt;
+        if (this.shootTimer >= 3000) {
+          this.isCharging = true;
+          this.chargeTimer = 0;
+          this.vx = 0;
+          this.vy = 0;
+        } else if (dist > 0) {
+          this.x += (dx / dist) * this.speed * dt;
+          this.y += (dy / dist) * this.speed * dt;
+        }
+      }
     }
   }
 
@@ -876,7 +948,7 @@ class JellyfishEnemy extends BaseEnemy {
     super(x, y, 'jellyfish');
     this.radius = 16;
     this.speed = 2.1;
-    this.hp = 2;
+    this.hp = 4;
     this.color = '#ff00aa'; // Pulsing Magenta
     this.scoreVal = 250;
     
@@ -884,12 +956,24 @@ class JellyfishEnemy extends BaseEnemy {
     this.swimPhase = Math.random() * Math.PI * 2;
     this.shootCooldown = 1800;
     this.lastShot = 0;
+    this.escapeTimer = 0;
+    this.triggerEscapeSparks = false;
     
     // History array for dynamic wiggly tentacle nodes path lagging
     this.history = [];
     for(let i=0; i<15; i++) {
       this.history.push({x: x, y: y});
     }
+  }
+
+  damageRecoil(dx, dy, force = 2.5) {
+    const angle = Math.atan2(dy, dx);
+    this.vx = Math.cos(angle) * 10.0;
+    this.vy = Math.sin(angle) * 10.0;
+    this.escapeTimer = 1200; // escape for 1.2 seconds
+    this.triggerEscapeSparks = true;
+    this.scaleX = 0.4;
+    this.scaleY = 1.6;
   }
 
   update(px, py, dt, gameTime, onShoot) {
@@ -901,30 +985,44 @@ class JellyfishEnemy extends BaseEnemy {
     this.vy *= Math.pow(0.85, dt);
     this.updateScales(dt);
 
-    // Dynamic swim cycles: squash & stretch based on sine velocity waves!
-    this.swimPhase += 0.08 * dt;
-    const pulseFactor = Math.sin(this.swimPhase);
-    
-    let currentSpeed = this.speed;
-    if (pulseFactor > 0.2) {
-      // Contract bell -> boost forward!
-      this.scaleX = 0.7;
-      this.scaleY = 1.35;
-      currentSpeed = this.speed * 2.3;
-    } else {
-      // Expand bell -> drift glide
-      this.scaleX = 1.25;
-      this.scaleY = 0.8;
-      currentSpeed = this.speed * 0.4;
-    }
-
     const dx = px - this.x;
     const dy = py - this.y;
     const dist = Math.hypot(dx, dy);
 
-    if (dist > 0) {
-      this.x += (dx / dist) * currentSpeed * dt;
-      this.y += (dy / dist) * currentSpeed * dt;
+    if (this.escapeTimer > 0) {
+      this.escapeTimer -= 16.6 * dt;
+      
+      if (this.triggerEscapeSparks) {
+        this.triggerEscapeSparks = false;
+        // Release 5 slow warning spark bullets in a circle when escaping
+        const startAng = Math.random() * Math.PI * 2;
+        for (let i = 0; i < 5; i++) {
+          const ang = startAng + (Math.PI * 2 / 5) * i;
+          onShoot(this.x, this.y, ang);
+        }
+      }
+    } else {
+      // Dynamic swim cycles: squash & stretch based on sine velocity waves!
+      this.swimPhase += 0.08 * dt;
+      const pulseFactor = Math.sin(this.swimPhase);
+      
+      let currentSpeed = this.speed;
+      if (pulseFactor > 0.2) {
+        // Contract bell -> boost forward!
+        this.scaleX = 0.7;
+        this.scaleY = 1.35;
+        currentSpeed = this.speed * 2.3;
+      } else {
+        // Expand bell -> drift glide
+        this.scaleX = 1.25;
+        this.scaleY = 0.8;
+        currentSpeed = this.speed * 0.4;
+      }
+
+      if (dist > 0) {
+        this.x += (dx / dist) * currentSpeed * dt;
+        this.y += (dy / dist) * currentSpeed * dt;
+      }
     }
 
     // Lag tentacle history coordinates
@@ -932,7 +1030,7 @@ class JellyfishEnemy extends BaseEnemy {
     if (this.history.length > 18) this.history.pop();
 
     // Fire bullet patterns
-    if (gameTime - this.lastShot > this.shootCooldown && dist < 360) {
+    if (this.escapeTimer <= 0 && gameTime - this.lastShot > this.shootCooldown && dist < 360) {
       onShoot(this.x, this.y, Math.atan2(dy, dx));
       this.lastShot = gameTime + (Math.random() - 0.5) * 300;
       this.scaleX = 0.5; this.scaleY = 1.5; // huge recoil squash
@@ -1030,7 +1128,7 @@ class SerpentEnemy extends BaseEnemy {
     super(x, y, 'serpent');
     this.radius = 12; // head radius
     this.speed = 2.6;
-    this.hp = 1; // head hp
+    this.hp = 5; // head hp (reinforced)
     this.color = '#39ff14'; // Neon Green
     this.scoreVal = 300;
 
@@ -1162,6 +1260,323 @@ class SerpentEnemy extends BaseEnemy {
     ctx.arc(this.radius * 0.35, -this.radius * 0.4, 2.5, 0, Math.PI * 2);
     ctx.fill();
     
+    ctx.restore();
+  }
+}
+
+// 3.5 Linker Enemy (Shield Link Guardian)
+class LinkerEnemy extends BaseEnemy {
+  constructor(x, y) {
+    super(x, y, 'linker');
+    this.radius = 18;
+    this.speed = 1.2;
+    this.hp = 3;
+    this.color = '#ffe600'; // Gold/Yellow
+    this.scoreVal = 400;
+    this.links = []; // targets currently linked
+    this.angle = 0;
+  }
+
+  update(px, py, dt, gameTime, onShoot, enemies) {
+    if (this.sliced) { this.sliceTimer += dt; return; }
+    
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.vx *= Math.pow(0.85, dt);
+    this.vy *= Math.pow(0.85, dt);
+    this.updateScales(dt);
+    
+    this.angle += 0.02 * dt;
+
+    // Wander slowly around player, keeping a moderate distance
+    const dx = px - this.x;
+    const dy = py - this.y;
+    const dist = Math.hypot(dx, dy);
+    
+    // Maintain a distance of 250-350px
+    if (dist > 350) {
+      this.x += (dx / dist) * this.speed * dt;
+      this.y += (dy / dist) * this.speed * dt;
+    } else if (dist < 250) {
+      this.x -= (dx / dist) * this.speed * dt;
+      this.y -= (dy / dist) * this.speed * dt;
+    } else {
+      // Orbit slowly
+      const orbitAng = Math.atan2(dy, dx) + 0.5 * Math.PI;
+      this.x += Math.cos(orbitAng) * this.speed * 0.5 * dt;
+      this.y += Math.sin(orbitAng) * this.speed * 0.5 * dt;
+    }
+
+    // Dynamic Linking: Link to nearest 2 non-linker enemies that aren't sliced
+    this.links = [];
+    if (enemies) {
+      const candidates = enemies
+        .filter(e => e !== this && e.type !== 'linker' && !e.sliced)
+        .map(e => ({ enemy: e, dist: Vec.dist(this.x, this.y, e.x, e.y) }))
+        .sort((a, b) => a.dist - b.dist);
+      
+      // Take the top 2 closest ones within range of 400px
+      for (let i = 0; i < Math.min(2, candidates.length); i++) {
+        if (candidates[i].dist < 400) {
+          const target = candidates[i].enemy;
+          this.links.push(target);
+          target.isLinkedProtected = true; // Mark as protected
+        }
+      }
+    }
+  }
+
+  draw(ctx, cx, cy, w, h, timeScale) {
+    const sx = this.x - cx + w / 2;
+    const sy = this.y - cy + h / 2;
+
+    ctx.save();
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = this.color;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    
+    // Draw links (noise-based electric lines to linked enemies)
+    if (!this.sliced && this.links.length > 0) {
+      this.links.forEach(target => {
+        const tx = target.x - cx + w / 2;
+        const ty = target.y - cy + h / 2;
+        const dist = Vec.dist(sx, sy, tx, ty);
+        if (dist > 0) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255, 230, 0, 0.7)';
+          ctx.lineWidth = 2.5 + Math.random() * 1.5;
+          ctx.shadowBlur = 10;
+          ctx.shadowColor = '#ffe600';
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          
+          const segments = 5;
+          for (let j = 1; j < segments; j++) {
+            const t = j / segments;
+            const lx = sx + (tx - sx) * t;
+            const ly = sy + (ty - sy) * t;
+            const offset = (Math.random() - 0.5) * 12;
+            const perpX = -(ty - sy) / dist;
+            const perpY = (tx - sx) / dist;
+            ctx.lineTo(lx + perpX * offset, ly + perpY * offset);
+          }
+          ctx.lineTo(tx, ty);
+          ctx.stroke();
+          
+          // Draw a protect ring around linked target
+          ctx.strokeStyle = 'rgba(255, 230, 0, 0.4)';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.arc(tx, ty, target.radius + 8, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+      });
+    }
+
+    ctx.translate(sx, sy);
+    ctx.scale(this.scaleX, this.scaleY);
+
+    if (this.sliced) {
+      ctx.fillStyle = this.color;
+      ctx.globalAlpha = 0.7;
+      const shift = Math.sin(this.sliceTimer * 0.12) * 8;
+      ctx.beginPath();
+      ctx.arc(-shift, -shift, this.radius, Math.PI * 0.75, Math.PI * 1.75);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(shift, shift, this.radius, Math.PI * 1.75, Math.PI * 0.75);
+      ctx.fill();
+    } else {
+      // Core triangle pointing down
+      ctx.fillStyle = '#1a1300'; // dark core
+      ctx.strokeStyle = this.color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(0, this.radius);
+      ctx.lineTo(this.radius * 0.85, -this.radius * 0.5);
+      ctx.lineTo(-this.radius * 0.85, -this.radius * 0.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Rotating shielding outer diamonds
+      ctx.save();
+      ctx.rotate(this.angle);
+      ctx.fillStyle = this.color;
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      for (let k = 0; k < 3; k++) {
+        ctx.save();
+        ctx.rotate((Math.PI * 2 / 3) * k);
+        ctx.translate(0, -this.radius * 1.3);
+        // Draw small diamond
+        ctx.moveTo(0, -6);
+        ctx.lineTo(4, 0);
+        ctx.lineTo(0, 6);
+        ctx.lineTo(-4, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+}
+
+// 3.6 Phantom Enemy (Mirage Splitter)
+class PhantomEnemy extends BaseEnemy {
+  constructor(x, y) {
+    super(x, y, 'phantom');
+    this.radius = 15;
+    this.speed = 1.6;
+    this.hp = 1;
+    this.color = '#b026ff'; // Purple
+    this.baseColor = '#b026ff';
+    this.scoreVal = 350;
+    this.isSplit = false;
+    this.splitTimer = 0;
+    this.angle = Math.random() * Math.PI * 2;
+    this.mirages = []; // coordinates of two mirages
+  }
+
+  update(px, py, dt, gameTime, onShoot) {
+    if (this.sliced) { this.sliceTimer += dt; return; }
+
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.vx *= Math.pow(0.85, dt);
+    this.vy *= Math.pow(0.85, dt);
+    this.updateScales(dt);
+
+    const dx = px - this.x;
+    const dy = py - this.y;
+    const dist = Math.hypot(dx, dy);
+
+    if (!this.isSplit && dist < 280) {
+      // Split into 3! (1 real, 2 illusions)
+      this.isSplit = true;
+      window.audio.playSe('se_aim'); // warping sound clue
+      this.scaleX = 0.3; this.scaleY = 1.7; // warp stretch
+    }
+
+    if (this.isSplit) {
+      this.splitTimer += 0.02 * dt;
+      // Illusions orbit the real core
+      const orbitDist = 45 + Math.sin(this.splitTimer * 2) * 10;
+      this.mirages = [
+        {
+          x: this.x + Math.cos(this.splitTimer + Math.PI * 0.66) * orbitDist,
+          y: this.y + Math.sin(this.splitTimer + Math.PI * 0.66) * orbitDist,
+          radius: this.radius,
+          sliced: false
+        },
+        {
+          x: this.x + Math.cos(this.splitTimer + Math.PI * 1.33) * orbitDist,
+          y: this.y + Math.sin(this.splitTimer + Math.PI * 1.33) * orbitDist,
+          radius: this.radius,
+          sliced: false
+        }
+      ];
+
+      // Slowly crawl towards player
+      if (dist > 0) {
+        this.x += (dx / dist) * this.speed * 0.7 * dt;
+        this.y += (dy / dist) * this.speed * 0.7 * dt;
+      }
+    } else {
+      if (dist > 0) {
+        this.x += (dx / dist) * this.speed * dt;
+        this.y += (dy / dist) * this.speed * dt;
+      }
+    }
+  }
+
+  draw(ctx, cx, cy, w, h, timeScale) {
+    const halfW = w / 2;
+    const halfH = h / 2;
+
+    // Draw mirages first
+    if (this.isSplit && !this.sliced) {
+      this.mirages.forEach((m, idx) => {
+        if (m.sliced) return;
+        const msx = m.x - cx + halfW;
+        const msy = m.y - cy + halfH;
+        
+        ctx.save();
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = 'rgba(176, 38, 255, 0.4)';
+        ctx.fillStyle = 'rgba(176, 38, 255, 0.28)'; // Very faint look
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.lineWidth = 1;
+        
+        ctx.translate(msx, msy);
+        ctx.beginPath();
+        // Thin diamond outline
+        ctx.moveTo(0, -m.radius);
+        ctx.lineTo(m.radius * 0.8, 0);
+        ctx.lineTo(0, m.radius);
+        ctx.lineTo(-m.radius * 0.8, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        
+        // Faint eye
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.beginPath();
+        ctx.arc(0, 0, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+    }
+
+    // Draw real one
+    const sx = this.x - cx + halfW;
+    const sy = this.y - cy + halfH;
+
+    ctx.save();
+    ctx.shadowBlur = 14;
+    ctx.shadowColor = this.color;
+    ctx.fillStyle = this.color;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+
+    ctx.translate(sx, sy);
+    ctx.scale(this.scaleX, this.scaleY);
+
+    if (this.sliced) {
+      ctx.globalAlpha = 0.7;
+      const shift = Math.sin(this.sliceTimer * 0.12) * 8;
+      ctx.beginPath();
+      ctx.arc(-shift, -shift, this.radius, Math.PI * 0.75, Math.PI * 1.75);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(shift, shift, this.radius, Math.PI * 1.75, Math.PI * 0.75);
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      // Sleek hollow diamond
+      ctx.moveTo(0, -this.radius);
+      ctx.lineTo(this.radius, 0);
+      ctx.lineTo(0, this.radius);
+      ctx.lineTo(-this.radius, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      
+      // Bright core eye
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowBlur = 8;
+      ctx.shadowColor = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(0, 0, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     ctx.restore();
   }
 }
@@ -1674,8 +2089,8 @@ class ColossusLeviathan {
     this.y = y;
     this.vx = 0;
     this.vy = 0;
-    this.maxHp = 750; // Colossal HP pool
-    this.hp = 750;
+    this.maxHp = 350; // Balanced HP pool (down from 750)
+    this.hp = 350;
     this.radius = 110; // Giant head radius
     this.color = '#39ff14'; // Cyber Green
     this.type = 'leviathan';
@@ -1698,8 +2113,8 @@ class ColossusLeviathan {
         x: x,
         y: y,
         radius: 85 - i * 4.5, // tapers down from 85 to 45
-        hp: 30 + (10 - i) * 10,              // HP per segment
-        maxHp: 30 + (10 - i) * 10,
+        hp: 15 + (10 - i) * 4,              // Balanced HP per segment (down from 30 + (10 - i) * 10)
+        maxHp: 15 + (10 - i) * 4,
         color: '#39ff14',
         isSevered: false,
         shootCooldown: 900,
@@ -1776,10 +2191,10 @@ class ColossusLeviathan {
       
       // Firing bullets from segments
       const activeSegsCount = this.segments.filter(s => !s.isSevered).length;
-      let shootInterval = this.isOverdrive ? 500 : 1000;
-      shootInterval += activeSegsCount * 50; // slower if more segments are alive to balance difficulty
+      let shootInterval = this.isOverdrive ? 800 : 1400;
+      shootInterval += activeSegsCount * 80; // slower if more segments are alive to balance difficulty
       
-      if (gameTime - seg.lastShot > shootInterval && Math.random() < 0.3) {
+      if (gameTime - seg.lastShot > shootInterval && Math.random() < 0.2) {
         const bulletAngle = Math.atan2(player.y - seg.y, player.x - seg.x) + (Math.random() - 0.5) * 0.25;
         onSpawnBullet(seg.x, seg.y, bulletAngle);
         if (this.isOverdrive) {
@@ -1817,7 +2232,7 @@ class ColossusLeviathan {
       
       if (this.attackPhase === 0) {
         const spiralSpeed = this.isOverdrive ? 0.009 : 0.005;
-        const shootRate = this.isOverdrive ? 70 : 130;
+        const shootRate = this.isOverdrive ? 90 : 160;
         if (Math.floor(this.attackTimer) % shootRate < 16.6) {
           const spAng = (gameTime * spiralSpeed) % (Math.PI * 2);
           const bulletCount = this.isOverdrive ? 8 : 4;
@@ -1827,7 +2242,7 @@ class ColossusLeviathan {
           }
         }
       } else if (this.attackPhase === 1) {
-        const shootRate = this.isOverdrive ? 400 : 750;
+        const shootRate = this.isOverdrive ? 500 : 900;
         if (this.attackTimer % shootRate < 16.6) {
           const ringCount = this.isOverdrive ? 16 : 10;
           for (let i = 0; i < ringCount; i++) {
@@ -2286,8 +2701,8 @@ class VortexSingularity {
         ringIndex: 0,
         orbitRadius: 140,
         speed: 0.018,
-        hp: 3,
-        maxHp: 3,
+        hp: 9,
+        maxHp: 9,
         color: '#00f3ff' // Cyan
       });
     }
@@ -2300,8 +2715,8 @@ class VortexSingularity {
         ringIndex: 1,
         orbitRadius: 200,
         speed: -0.013,
-        hp: 4,
-        maxHp: 4,
+        hp: 12,
+        maxHp: 12,
         color: '#b026ff' // Purple
       });
     }
@@ -2314,8 +2729,8 @@ class VortexSingularity {
         ringIndex: 2,
         orbitRadius: 260,
         speed: 0.009,
-        hp: 5,
-        maxHp: 5,
+        hp: 15,
+        maxHp: 15,
         color: '#ff0055' // Pink
       });
     }
@@ -2324,6 +2739,8 @@ class VortexSingularity {
   update(player, dt, gameTime, onSpawnBullet, onDebrisEjected) {
     this.updateScales(dt);
     const game = player.gameRef;
+    
+    const destroyedRatio = (24 - this.shieldBlocks.length) / 24;
     
     if (this.state === 'spawning') {
       const d = Vec.dist(this.x, this.y, 1500, 1500);
@@ -2374,9 +2791,9 @@ class VortexSingularity {
     
     this.updateShields(dt);
     
-    // Core pulser
-    const pulseRate = this.state === 'vortex' ? 0.15 : 0.05;
-    const pulseWidth = this.state === 'vortex' ? 0.12 : 0.04;
+    // Core pulser (pulses faster as shields are destroyed)
+    const pulseRate = this.state === 'vortex' ? 0.15 : (0.05 + destroyedRatio * 0.08);
+    const pulseWidth = this.state === 'vortex' ? 0.12 : (0.04 + destroyedRatio * 0.06);
     const currentPulse = 1.0 + Math.sin(gameTime * pulseRate) * pulseWidth;
     this.scaleX = currentPulse;
     this.scaleY = currentPulse;
@@ -2391,10 +2808,11 @@ class VortexSingularity {
       this.y += dy * 0.015 * dt;
       
       if (this.attackPhase === 0) {
-        const shootRate = this.isOverdrive ? 80 : 140;
+        const baseRate = this.isOverdrive ? 60 : 110;
+        const shootRate = Math.max(30, baseRate - destroyedRatio * 50); // Fires faster as shields drop
         if (Math.floor(this.attackTimer) % shootRate < 16.6) {
           const spAng = (gameTime * (this.isOverdrive ? 0.008 : 0.004)) % (Math.PI * 2);
-          const bulletCount = this.isOverdrive ? 10 : 5;
+          const bulletCount = (this.isOverdrive ? 10 : 5) + Math.floor(destroyedRatio * 6); // More bullets as shields drop
           for (let i = 0; i < bulletCount; i++) {
             const finalAng = spAng + (Math.PI * 2 / bulletCount) * i;
             onSpawnBullet(this.x, this.y, finalAng);
@@ -2402,7 +2820,8 @@ class VortexSingularity {
         }
       } else if (this.attackPhase === 2) {
         // Expanding plasma rings
-        const ringInterval = this.isOverdrive ? 1500 : 2500;
+        const baseRingInterval = this.isOverdrive ? 1500 : 2500;
+        const ringInterval = Math.max(900, baseRingInterval - destroyedRatio * 1000); // Shorter interval as shields drop
         if (Math.floor(this.attackTimer) % ringInterval < 16.6) {
           if (game) {
             game.bossPlasmaRings.push(new BossPlasmaRing(this.x, this.y, 650, this.color));
@@ -2410,16 +2829,14 @@ class VortexSingularity {
           window.audio.playSe('se_aim');
         }
         
-        // Aimed triple-spread
+        // Aimed spread
         const shootInterval = this.isOverdrive ? 450 : 800;
         if (Math.floor(this.attackTimer) % shootInterval < 16.6) {
           const ang = Math.atan2(player.y - this.y, player.x - this.x);
-          onSpawnBullet(this.x, this.y, ang);
-          onSpawnBullet(this.x, this.y, ang - 0.25);
-          onSpawnBullet(this.x, this.y, ang + 0.25);
-          if (this.isOverdrive) {
-            onSpawnBullet(this.x, this.y, ang - 0.5);
-            onSpawnBullet(this.x, this.y, ang + 0.5);
+          const spreadCount = 3 + Math.floor(destroyedRatio * 4); // Expands from 3-way to up to 7-way spread
+          for (let k = 0; k < spreadCount; k++) {
+            const spreadOffset = (k - (spreadCount - 1) / 2) * 0.22;
+            onSpawnBullet(this.x, this.y, ang + spreadOffset);
           }
         }
       }
@@ -2445,17 +2862,19 @@ class VortexSingularity {
       if (game && game.grid.gravityWell) {
         game.grid.gravityWell.x = this.x;
         game.grid.gravityWell.y = this.y;
-        game.grid.gravityWell.force = 160 + Math.sin(gameTime * 0.05) * 40;
+        game.grid.gravityWell.force = 160 + Math.sin(gameTime * 0.05) * 40 + destroyedRatio * 180; // Stronger warp distortion
       }
       
-      // Gravitational attraction
+      // Gravitational attraction (pull force scales up to 3x based on destroyed shields)
       const dx = this.x - player.x;
-      const dy = this.y - player.y;
-      const dist = Math.hypot(dx, dy);
+      const dy = player.y - player.y; // Wait, original code: dy = this.y - player.y (Let's fix that copy typo too!)
+      const dyReal = this.y - player.y;
+      const dist = Math.hypot(dx, dyReal);
       if (dist > 15) {
-        const pullForce = (this.isOverdrive ? 0.38 : 0.24) * dt;
+        const basePull = this.isOverdrive ? 0.38 : 0.24;
+        const pullForce = (basePull + destroyedRatio * 0.45) * dt;
         player.vx += (dx / dist) * pullForce;
-        player.vy += (dy / dist) * pullForce;
+        player.vy += (dyReal / dist) * pullForce;
       }
       
       // Pull bullets
@@ -2478,11 +2897,12 @@ class VortexSingularity {
         }
       }
       
-      // Radial sweeps
-      const shootRate = this.isOverdrive ? 60 : 110;
+      // Radial sweeps (sweeps faster as shields drop)
+      const baseSweepRate = this.isOverdrive ? 60 : 110;
+      const shootRate = Math.max(30, baseSweepRate - destroyedRatio * 50);
       if (Math.floor(this.attackTimer) % shootRate < 16.6) {
         const rAng = (gameTime * 0.006) % (Math.PI * 2);
-        const streams = this.isOverdrive ? 8 : 4;
+        const streams = (this.isOverdrive ? 8 : 4) + Math.floor(destroyedRatio * 4); // More sweeps as shields drop
         for (let i = 0; i < streams; i++) {
           onSpawnBullet(this.x, this.y, rAng + (Math.PI * 2 / streams) * i);
         }
@@ -2951,7 +3371,17 @@ class GameEngine {
     };
 
     const handleStart = (coords) => {
-      if (this.state !== 'playing' || this.player.state === 'dashing') return;
+      if (this.state !== 'playing') return;
+      
+      // If player is already dashing, apply brake on click and transition to idle
+      if (this.player.state === 'dashing') {
+        this.player.vx = 0;
+        this.player.vy = 0;
+        this.player.state = 'idle';
+        this.spawnBurstParticles(this.player.x, this.player.y, '#ffffff', 8, 'slash');
+        this.grid.applyExplosion(this.player.x, this.player.y, 15, 120);
+        window.audio.playSe('se_hit');
+      }
       
       if (this.player.dashCharges >= 1 && this.player.energy > 8) {
         this.player.state = 'aiming';
@@ -2978,25 +3408,30 @@ class GameEngine {
         this.player.state = 'dashing';
         this.player.dashCharges--;
         this.player.dashStart = { x: this.player.x, y: this.player.y };
+        this.player.slicedTargets = new Set();
         
         if (this.player.hasPhantomDecoy) {
           this.decoys.push(new PhantomDecoy(this.player.x, this.player.y));
         }
         
-        const angle = Math.atan2(dy, dx);
-        const dashDist = Math.min(dist * 2.2, this.player.maxDashRange);
+        const angle = Math.atan2(-dy, -dx);
+        const dragRatio = Math.min(dist * 2.2, this.player.maxDashRange) / this.player.maxDashRange;
         
-        this.player.dashTarget = {
-          x: Vec.clamp(this.player.x + Math.cos(angle) * dashDist, 20, CONFIG.arenaSize - 20),
-          y: Vec.clamp(this.player.y + Math.sin(angle) * dashDist, 20, CONFIG.arenaSize - 20)
-        };
+        // Initial physical dash velocity (16px to 38px per frame at max drag)
+        const initialSpeed = 16.0 + dragRatio * 22.0;
+        this.player.vx = Math.cos(angle) * initialSpeed;
+        this.player.vy = Math.sin(angle) * initialSpeed;
         
-        this.player.dashProgress = 0;
         this.shakeIntensity = this.feverActive ? 20 : 12;
         window.audio.playSe('se_dash');
         
         this.spawnBurstParticles(this.player.x, this.player.y, '#ffffff', 12, 'slash');
-        this.grid.applyLineForce(this.player.x, this.player.y, this.player.dashTarget.x, this.player.dashTarget.y, 40, 110);
+        
+        // Generate ripple grid force along predicted trajectory
+        const predictedDist = dragRatio * this.player.maxDashRange;
+        const predX = Vec.clamp(this.player.x + Math.cos(angle) * predictedDist, 20, CONFIG.arenaSize - 20);
+        const predY = Vec.clamp(this.player.y + Math.sin(angle) * predictedDist, 20, CONFIG.arenaSize - 20);
+        this.grid.applyLineForce(this.player.x, this.player.y, predX, predY, 40, 110);
       } else {
         this.player.state = 'idle';
       }
@@ -3035,9 +3470,20 @@ class GameEngine {
       }
     });
 
-    this.dom.startBtn.addEventListener('click', () => this.startGame());
-    this.dom.restartBtn.addEventListener('click', () => this.startGame());
-    this.dom.audioBtn.addEventListener('click', () => {
+    const bindButton = (btn, action) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        action();
+      });
+      btn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        action();
+      }, { passive: false });
+    };
+
+    bindButton(this.dom.startBtn, () => this.startGame());
+    bindButton(this.dom.restartBtn, () => this.startGame());
+    bindButton(this.dom.audioBtn, () => {
       const isMuted = !window.audio.isMuted;
       window.audio.setMute(isMuted);
       if (isMuted) this.dom.audioBtn.classList.add('muted');
@@ -3335,6 +3781,17 @@ class GameEngine {
         if (e.sliced) continue;
         const d = Vec.dist(this.player.x, this.player.y, e.x, e.y);
         if (d < this.player.chronosFieldRadius) {
+          if (e.isLinkedProtected && !e.sliced) {
+            this.teslaArcs.push({
+              x1: this.player.x, y1: this.player.y,
+              x2: e.x, y2: e.y,
+              life: 1.0,
+              color: '#ffe600'
+            });
+            window.audio.playSe('se_aim');
+            this.spawnBurstParticles(e.x, e.y, '#ffe600', 3, 'wallSpark');
+            continue;
+          }
           e.hp -= 0.8;
           // Spawn electrical arc lines
           this.teslaArcs.push({
@@ -3444,28 +3901,37 @@ class GameEngine {
       this.grid.applyExplosion(this.player.x, this.player.y, -1.0, 110);
     }
     else if (this.player.state === 'dashing') {
-      this.player.dashProgress += this.player.dashSpeed;
+      const prevX = this.player.x;
+      const prevY = this.player.y;
       
-      const curX = Vec.lerp(this.player.dashStart.x, this.player.dashTarget.x, this.player.dashProgress);
-      const curY = Vec.lerp(this.player.dashStart.y, this.player.dashTarget.y, this.player.dashProgress);
+      // Physical movement integration
+      this.player.x += this.player.vx * dt;
+      this.player.y += this.player.vy * dt;
       
-      this.checkSlices(this.player.x, this.player.y, curX, curY);
+      this.handleWallCollisions();
       
-      this.player.x = curX;
-      this.player.y = curY;
+      // Apply physical deceleration (friction and air drag)
+      const speed = Math.hypot(this.player.vx, this.player.vy);
+      if (speed > 0) {
+        const drag = 0.03 * speed;
+        const friction = 0.22;
+        const newSpeed = Math.max(0, speed - (drag + friction) * dt);
+        this.player.vx = (this.player.vx / speed) * newSpeed;
+        this.player.vy = (this.player.vy / speed) * newSpeed;
+      }
+      
+      // Slice enemies along the trajectory segment between frames
+      this.checkSlices(prevX, prevY, this.player.x, this.player.y);
       
       if (Math.random() < 0.8) {
         this.particles.push(new Particle(this.player.x, this.player.y, '#ffffff', 'slash'));
       }
 
-      if (this.player.dashProgress >= 1.0) {
+      // Exit dash state once the speed falls below slice threshold
+      const currentSpeed = Math.hypot(this.player.vx, this.player.vy);
+      if (currentSpeed < 4.0) {
         this.player.state = 'idle';
-        this.player.invincibilityTimer = 250; // 250ms of grace period invincibility after dash
-        
-        const dashAngle = Math.atan2(this.player.dashTarget.y - this.player.dashStart.y, this.player.dashTarget.x - this.player.dashStart.x);
-        const exitSpeed = 8.5;
-        this.player.vx = Math.cos(dashAngle) * exitSpeed;
-        this.player.vy = Math.sin(dashAngle) * exitSpeed;
+        this.player.invincibilityTimer = 250; // Grace period invincibility after dash
         
         this.triggerAnimeSliceExplosions();
         
@@ -3512,6 +3978,12 @@ class GameEngine {
       this.player.drones[i].update(this.player.x, this.player.y, this.gameTime, scanTargets, (sx, sy, tgt) => {
         this.lasers.push(new LaserBeam(sx, sy, tgt.x, tgt.y));
         
+        if (tgt.isLinkedProtected && !tgt.sliced) {
+          this.spawnBurstParticles(tgt.x, tgt.y, '#ffe600', 4, 'wallSpark');
+          window.audio.playSe('se_aim');
+          return;
+        }
+
         // Mega laser synergy deals double damage
         let damageVal = this.player.droneMegaLaser ? 1.45 : 0.65;
         if (tgt === this.boss) {
@@ -3584,6 +4056,11 @@ class GameEngine {
       }
     }
 
+    // Clear protection flags before update
+    for (let i = 0; i < this.enemies.length; i++) {
+      this.enemies[i].isLinkedProtected = false;
+    }
+
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];
       
@@ -3599,7 +4076,7 @@ class GameEngine {
         if (this.bullets.length < CONFIG.maxBullets) {
           this.bullets.push(new Bullet(bx, by, ang, 3.8 + (this.score * 0.00004)));
         }
-      });
+      }, this.enemies);
 
       if (!e.sliced && this.player.state !== 'dashing') {
         const d = Vec.dist(this.player.x, this.player.y, e.x, e.y);
@@ -3738,6 +4215,13 @@ class GameEngine {
         
         const d = Vec.dist(m.x, m.y, e.x, e.y);
         if (d < e.radius + m.radius) {
+          if (e.isLinkedProtected && !e.sliced) {
+            this.spawnBurstParticles(e.x, e.y, '#ffe600', 4, 'wallSpark');
+            window.audio.playSe('se_aim');
+            m.active = false;
+            this.missiles.splice(i, 1);
+            break;
+          }
           e.hp--;
           m.active = false;
           if (e.hp <= 0) {
@@ -3807,24 +4291,25 @@ class GameEngine {
     const boundMin = 20;
     const boundMax = CONFIG.arenaSize - 20;
     let bounced = false;
+    const bounceFactor = this.player.state === 'dashing' ? 0.75 : 1.35;
 
     if (this.player.x < boundMin) {
       this.player.x = boundMin;
-      this.player.vx = -this.player.vx * 1.35;
+      this.player.vx = -this.player.vx * bounceFactor;
       bounced = true;
     } else if (this.player.x > boundMax) {
       this.player.x = boundMax;
-      this.player.vx = -this.player.vx * 1.35;
+      this.player.vx = -this.player.vx * bounceFactor;
       bounced = true;
     }
 
     if (this.player.y < boundMin) {
       this.player.y = boundMin;
-      this.player.vy = -this.player.vy * 1.35;
+      this.player.vy = -this.player.vy * bounceFactor;
       bounced = true;
     } else if (this.player.y > boundMax) {
       this.player.y = boundMax;
-      this.player.vy = -this.player.vy * 1.35;
+      this.player.vy = -this.player.vy * bounceFactor;
       bounced = true;
     }
 
@@ -3847,6 +4332,10 @@ class GameEngine {
       sliceRadius = this.player.playerDashRadius + 60; // 60px hitbox expansion!
     }
     
+    if (!this.player.slicedTargets) {
+      this.player.slicedTargets = new Set();
+    }
+    
     // Check Boss shields, core, and legs!
     if (this.boss && this.boss.state !== 'defeated') {
       // 1. Slice shields
@@ -3855,13 +4344,16 @@ class GameEngine {
           const sb = this.boss.shieldBlocks[i];
           let t = Vec.clamp(((sb.x - x1) * dx + (sb.y - y1) * dy) / lenSq, 0, 1);
           if (Vec.dist(sb.x, sb.y, x1 + t * dx, y1 + t * dy) < sb.radius + sliceRadius) {
-            sb.hp--;
-            this.bossHasBeenHit = true;
-            this.spawnBurstParticles(sb.x, sb.y, sb.color, 8, 'slash');
-            window.audio.playSe('se_hit');
-            if (sb.hp <= 0) {
-              this.boss.shieldBlocks.splice(i, 1);
-              this.grid.applyExplosion(sb.x, sb.y, 20, 110);
+            if (!this.player.slicedTargets.has(sb)) {
+              this.player.slicedTargets.add(sb);
+              sb.hp--;
+              this.bossHasBeenHit = true;
+              this.spawnBurstParticles(sb.x, sb.y, sb.color, 8, 'slash');
+              window.audio.playSe('se_hit');
+              if (sb.hp <= 0) {
+                this.boss.shieldBlocks.splice(i, 1);
+                this.grid.applyExplosion(sb.x, sb.y, 20, 110);
+              }
             }
           }
         }
@@ -3879,19 +4371,22 @@ class GameEngine {
           const dist = Vec.dist(seg.x, seg.y, cx, cy);
           
           if (dist < seg.radius + sliceRadius) {
-            seg.hp--;
-            this.bossHasBeenHit = true;
-            this.spawnBurstParticles(seg.x, seg.y, seg.color, 8, 'slash');
-            window.audio.playSe('se_hit');
-            
-            if (seg.hp <= 0) {
-              this.boss.severSegment(i);
-              this.incrementCombo();
+            if (!this.player.slicedTargets.has(seg)) {
+              this.player.slicedTargets.add(seg);
+              seg.hp--;
+              this.bossHasBeenHit = true;
+              this.spawnBurstParticles(seg.x, seg.y, seg.color, 8, 'slash');
+              window.audio.playSe('se_hit');
               
-              if (this.boss.hp <= 0) {
-                this.defeatBoss();
+              if (seg.hp <= 0) {
+                this.boss.severSegment(i);
+                this.incrementCombo();
+                
+                if (this.boss.hp <= 0) {
+                  this.defeatBoss();
+                }
+                break;
               }
-              break;
             }
           }
         }
@@ -3901,28 +4396,31 @@ class GameEngine {
         const cx = x1 + t * dx;
         const cy = y1 + t * dy;
         if (Vec.dist(this.boss.x, this.boss.y, cx, cy) < this.boss.radius + sliceRadius) {
-          if (this.boss.attackPhase === 2 && this.boss.shieldBlocks && this.boss.shieldBlocks.length > 0) {
-            this.spawnBurstParticles(cx, cy, '#ffffff', 4, 'slash');
-            window.audio.playSe('se_aim');
-          } else {
-            const activeSegs = this.boss.segments.filter(s => !s.isSevered).length;
-            const armorMult = activeSegs > 0 ? 0.15 : 1.0;
-            this.boss.hp -= 25.0 * armorMult; // Slicing the head directly deals massive damage, reduced by segments
-            this.bossHasBeenHit = true;
-            this.boss.damageRecoil(dx, dy);
-            
-            if (activeSegs > 0) {
-              this.spawnBurstParticles(this.boss.x, this.boss.y, '#ffffff', 6, 'slash');
-              this.spawnBurstParticles(this.boss.x, this.boss.y, this.boss.color, 10, 'slash');
-              window.audio.playSe('se_aim'); // metal clang sound clue
+          if (!this.player.slicedTargets.has(this.boss)) {
+            this.player.slicedTargets.add(this.boss);
+            if (this.boss.attackPhase === 2 && this.boss.shieldBlocks && this.boss.shieldBlocks.length > 0) {
+              this.spawnBurstParticles(cx, cy, '#ffffff', 4, 'slash');
+              window.audio.playSe('se_aim');
             } else {
-              this.spawnBurstParticles(this.boss.x, this.boss.y, this.boss.color, 16, 'slash');
-              this.grid.applyExplosion(this.boss.x, this.boss.y, 30, 160);
-              window.audio.playSe('se_hit');
-            }
-            
-            if (this.boss.hp <= 0) {
-              this.defeatBoss();
+              const activeSegs = this.boss.segments.filter(s => !s.isSevered).length;
+              const armorMult = activeSegs > 0 ? 0.15 : 1.0;
+              this.boss.hp -= 25.0 * armorMult; // Slicing the head directly deals massive damage, reduced by segments
+              this.bossHasBeenHit = true;
+              this.boss.damageRecoil(dx, dy);
+              
+              if (activeSegs > 0) {
+                this.spawnBurstParticles(this.boss.x, this.boss.y, '#ffffff', 6, 'slash');
+                this.spawnBurstParticles(this.boss.x, this.boss.y, this.boss.color, 10, 'slash');
+                window.audio.playSe('se_aim'); // metal clang sound clue
+              } else {
+                this.spawnBurstParticles(this.boss.x, this.boss.y, this.boss.color, 16, 'slash');
+                this.grid.applyExplosion(this.boss.x, this.boss.y, 30, 160);
+                window.audio.playSe('se_hit');
+              }
+              
+              if (this.boss.hp <= 0) {
+                this.defeatBoss();
+              }
             }
           }
         }
@@ -3932,21 +4430,24 @@ class GameEngine {
         const cx = x1 + t * dx;
         const cy = y1 + t * dy;
         if (Vec.dist(this.boss.x, this.boss.y, cx, cy) < this.boss.radius + sliceRadius) {
-          const activeShields = this.boss.shieldBlocks.length;
-          this.bossHasBeenHit = true;
-          if (activeShields > 0) {
-            this.boss.hp -= 25.0 * 0.05; // 95% damage reduction
-            this.spawnBurstParticles(cx, cy, '#ffffff', 4, 'slash');
-            window.audio.playSe('se_aim');
-          } else {
-            this.boss.hp -= 25.0; // full core damage
-            this.boss.damageRecoil(dx, dy);
-            this.spawnBurstParticles(this.boss.x, this.boss.y, this.boss.color, 16, 'slash');
-            this.grid.applyExplosion(this.boss.x, this.boss.y, 30, 160);
-            window.audio.playSe('se_hit');
-          }
-          if (this.boss.hp <= 0) {
-            this.defeatBoss();
+          if (!this.player.slicedTargets.has(this.boss)) {
+            this.player.slicedTargets.add(this.boss);
+            const activeShields = this.boss.shieldBlocks.length;
+            this.bossHasBeenHit = true;
+            if (activeShields > 0) {
+              this.boss.hp -= 25.0 * 0.05; // 95% damage reduction
+              this.spawnBurstParticles(cx, cy, '#ffffff', 4, 'slash');
+              window.audio.playSe('se_aim');
+            } else {
+              this.boss.hp -= 25.0; // full core damage
+              this.boss.damageRecoil(dx, dy);
+              this.spawnBurstParticles(this.boss.x, this.boss.y, this.boss.color, 16, 'slash');
+              this.grid.applyExplosion(this.boss.x, this.boss.y, 30, 160);
+              window.audio.playSe('se_hit');
+            }
+            if (this.boss.hp <= 0) {
+              this.defeatBoss();
+            }
           }
         }
       } else {
@@ -3968,19 +4469,22 @@ class GameEngine {
           // Legs are easier to hit if player has larger scythe
           const legHitWidth = this.player.hasLaserScythe ? 36 : 22;
           if (distA < legHitWidth || distB < legHitWidth) {
-            leg.hp--;
-            this.bossHasBeenHit = true;
-            this.spawnBurstParticles(leg.kneeX, leg.kneeY, this.boss.color, 6, 'slash');
-            window.audio.playSe('se_hit');
+            if (!this.player.slicedTargets.has(leg)) {
+              this.player.slicedTargets.add(leg);
+              leg.hp--;
+              this.bossHasBeenHit = true;
+              this.spawnBurstParticles(leg.kneeX, leg.kneeY, this.boss.color, 6, 'slash');
+              window.audio.playSe('se_hit');
 
-            if (leg.hp <= 0) {
-              this.boss.severLeg(leg.id, (dbx, dby, col, type) => {
-                this.particles.push(new Particle(dbx, dby, col, type));
-              });
-              this.grid.applyExplosion(leg.kneeX, leg.kneeY, 40, 180);
-              this.shakeIntensity = 28;
-              this.triggerFlash('hit');
-              this.incrementCombo();
+              if (leg.hp <= 0) {
+                this.boss.severLeg(leg.id, (dbx, dby, col, type) => {
+                  this.particles.push(new Particle(dbx, dby, col, type));
+                });
+                this.grid.applyExplosion(leg.kneeX, leg.kneeY, 40, 180);
+                this.shakeIntensity = 28;
+                this.triggerFlash('hit');
+                this.incrementCombo();
+              }
             }
           }
         });
@@ -3991,19 +4495,22 @@ class GameEngine {
         const cy = y1 + t * dy;
         
         if (Vec.dist(this.boss.x, this.boss.y, cx, cy) < this.boss.radius + sliceRadius) {
-          if (this.boss.attackPhase === 2 && this.boss.shieldBlocks && this.boss.shieldBlocks.length > 0) {
-            this.spawnBurstParticles(cx, cy, '#ffffff', 4, 'slash');
-            window.audio.playSe('se_aim');
-          } else {
-            // Extra damage in overdrive
-            this.boss.hp -= 8.0;
-            this.bossHasBeenHit = true;
-            this.spawnBurstParticles(this.boss.x, this.boss.y, this.boss.color, 12, 'slash');
-            this.grid.applyExplosion(this.boss.x, this.boss.y, 25, 140);
-            window.audio.playSe('se_hit');
-            
-            if (this.boss.hp <= 0) {
-              this.defeatBoss();
+          if (!this.player.slicedTargets.has(this.boss)) {
+            this.player.slicedTargets.add(this.boss);
+            if (this.boss.attackPhase === 2 && this.boss.shieldBlocks && this.boss.shieldBlocks.length > 0) {
+              this.spawnBurstParticles(cx, cy, '#ffffff', 4, 'slash');
+              window.audio.playSe('se_aim');
+            } else {
+              // Extra damage in overdrive
+              this.boss.hp -= 8.0;
+              this.bossHasBeenHit = true;
+              this.spawnBurstParticles(this.boss.x, this.boss.y, this.boss.color, 12, 'slash');
+              this.grid.applyExplosion(this.boss.x, this.boss.y, 25, 140);
+              window.audio.playSe('se_hit');
+              
+              if (this.boss.hp <= 0) {
+                this.defeatBoss();
+              }
             }
           }
         }
@@ -4020,15 +4527,48 @@ class GameEngine {
       const cy = y1 + t * dy;
       const dist = Vec.dist(e.x, e.y, cx, cy);
 
+      // Check PhantomEnemy illusions (mirages) first
+      if (e.type === 'phantom' && e.isSplit) {
+        for (let k = 0; k < e.mirages.length; k++) {
+          const m = e.mirages[k];
+          if (m.sliced) continue;
+          const md = Vec.dist(m.x, m.y, cx, cy);
+          if (md < m.radius + sliceRadius) {
+            m.sliced = true;
+            this.spawnBurstParticles(m.x, m.y, '#ffffff', 8, 'shatter');
+            window.audio.playSe('se_bomb');
+            this.grid.applyExplosion(m.x, m.y, 18, 120);
+            
+            // Trap bullets (eject fast 8-way warning projectiles)
+            for (let bAng = 0; bAng < 8; bAng++) {
+              const angle = (Math.PI * 2 / 8) * bAng;
+              if (this.bullets.length < CONFIG.maxBullets) {
+                this.bullets.push(new Bullet(m.x, m.y, angle, 6.0));
+              }
+            }
+          }
+        }
+      }
+
       if (dist < e.radius + sliceRadius) {
+        // Linker protection shield check
+        if (e.isLinkedProtected && !e.sliced) {
+          this.spawnBurstParticles(cx, cy, '#ffe600', 4, 'wallSpark');
+          window.audio.playSe('se_aim'); // Shield clang
+          continue; // Block damage
+        }
+
         if (e.type === 'serpent') {
           // Check slice against tail segments too (slicing links severs serpent!)
           let segHit = -1;
           for(let k = 0; k < e.segments.length; k++) {
             const seg = e.segments[k];
             if (Vec.dist(seg.x, seg.y, cx, cy) < seg.radius + sliceRadius) {
-              segHit = k;
-              break;
+              if (!this.player.slicedTargets.has(seg)) {
+                segHit = k;
+                this.player.slicedTargets.add(seg);
+                break;
+              }
             }
           }
 
@@ -4039,6 +4579,13 @@ class GameEngine {
               const seg = e.segments[j];
               this.spawnBurstParticles(seg.x, seg.y, e.color, 6, 'shatter');
               this.grid.applyExplosion(seg.x, seg.y, 10, 50);
+              
+              // Eject counter bullet from segment explosion
+              if (this.bullets.length < CONFIG.maxBullets && Math.random() < 0.45) {
+                const angle = Math.random() * Math.PI * 2;
+                this.bullets.push(new Bullet(seg.x, seg.y, angle, 3.2));
+              }
+              
               e.segments.splice(j, 1);
             }
             this.score += 150 * count;
@@ -4050,28 +4597,32 @@ class GameEngine {
             }
             continue;
           }
-        }
-
-        e.hp--;
-        e.damageRecoil(dx, dy, 2.8);
-
-        if (e.hp <= 0) {
-          e.sliced = true;
-          this.incrementCombo();
-          
-          // Tesla Lightning Cascade
-          if (this.player.hasChainLightning) {
-            this.triggerTeslaChain(e);
-          }
         } else {
-          this.grid.applyExplosion(e.x, e.y, 16, 90);
-          
-          // Heavy shields emit physical metal wall sparks (Wow deflect detail!)
-          const pCount = e.type === 'heavy' ? 10 : 5;
-          const pType = e.type === 'heavy' ? 'wallSpark' : 'slash';
-          this.spawnBurstParticles(e.x, e.y, e.color, pCount, pType);
-          
-          window.audio.playSe('se_hit');
+          if (!this.player.slicedTargets.has(e)) {
+            this.player.slicedTargets.add(e);
+            
+            e.hp--;
+            e.damageRecoil(dx, dy, 2.8);
+
+            if (e.hp <= 0) {
+              e.sliced = true;
+              this.incrementCombo();
+              
+              // Tesla Lightning Cascade
+              if (this.player.hasChainLightning) {
+                this.triggerTeslaChain(e);
+              }
+            } else {
+              this.grid.applyExplosion(e.x, e.y, 16, 90);
+              
+              // Heavy shields emit physical metal wall sparks (Wow deflect detail!)
+              const pCount = e.type === 'heavy' ? 10 : 5;
+              const pType = e.type === 'heavy' ? 'wallSpark' : 'slash';
+              this.spawnBurstParticles(e.x, e.y, e.color, pCount, pType);
+              
+              window.audio.playSe('se_hit');
+            }
+          }
         }
       }
     }
@@ -4114,23 +4665,35 @@ class GameEngine {
       }
 
       if (target) {
-        target.hp -= 1.0;
-        
-        // Push electric line nodes
-        this.teslaArcs.push({
-          x1: currentSource.x, y1: currentSource.y,
-          x2: target.x, y2: target.y,
-          life: 1.0,
-          color: chainColor
-        });
-        
-        this.spawnBurstParticles(target.x, target.y, chainColor, 4, 'slash');
-        
-        if (target.hp <= 0) {
-          target.sliced = true;
-          this.explodeEnemy(target);
-          const idx = this.enemies.indexOf(target);
-          if (idx !== -1) this.enemies.splice(idx, 1);
+        if (target.isLinkedProtected && !target.sliced) {
+          // Draw electric arc to the protected target but don't damage it
+          this.teslaArcs.push({
+            x1: currentSource.x, y1: currentSource.y,
+            x2: target.x, y2: target.y,
+            life: 1.0,
+            color: '#ffe600' // yellow arc for shielded
+          });
+          this.spawnBurstParticles(target.x, target.y, '#ffe600', 4, 'wallSpark');
+          window.audio.playSe('se_aim');
+        } else {
+          target.hp -= 1.0;
+          
+          // Push electric line nodes
+          this.teslaArcs.push({
+            x1: currentSource.x, y1: currentSource.y,
+            x2: target.x, y2: target.y,
+            life: 1.0,
+            color: chainColor
+          });
+          
+          this.spawnBurstParticles(target.x, target.y, chainColor, 4, 'slash');
+          
+          if (target.hp <= 0) {
+            target.sliced = true;
+            this.explodeEnemy(target);
+            const idx = this.enemies.indexOf(target);
+            if (idx !== -1) this.enemies.splice(idx, 1);
+          }
         }
         
         currentSource = target;
@@ -4161,17 +4724,25 @@ class GameEngine {
       if (e.sliced) continue;
       const d = Vec.dist(sw.x, sw.y, e.x, e.y);
       if (Math.abs(d - sw.radius) < 20) {
-        const ang = Math.atan2(e.y - sw.y, e.x - sw.x);
-        e.vx += Math.cos(ang) * 9.0;
-        e.vy += Math.sin(ang) * 9.0;
-        
-        e.hp -= 1.0;
-        if (e.hp <= 0) {
-          e.sliced = true;
-          this.explodeEnemy(e);
-          this.enemies.splice(i, 1);
-        } else {
-          this.spawnBurstParticles(e.x, e.y, e.color, 4, 'slash');
+        if (!sw.hitTargets.has(e)) {
+          sw.hitTargets.add(e);
+          if (e.isLinkedProtected && !e.sliced) {
+            this.spawnBurstParticles(e.x, e.y, '#ffe600', 4, 'wallSpark');
+            window.audio.playSe('se_aim');
+            continue;
+          }
+          const ang = Math.atan2(e.y - sw.y, e.x - sw.x);
+          e.vx += Math.cos(ang) * 9.0;
+          e.vy += Math.sin(ang) * 9.0;
+          
+          e.hp -= 1.0;
+          if (e.hp <= 0) {
+            e.sliced = true;
+            this.explodeEnemy(e);
+            this.enemies.splice(i, 1);
+          } else {
+            this.spawnBurstParticles(e.x, e.y, e.color, 4, 'slash');
+          }
         }
       }
     }
@@ -4183,11 +4754,14 @@ class GameEngine {
           const sb = this.boss.shieldBlocks[k];
           const sbd = Vec.dist(sw.x, sw.y, sb.x, sb.y);
           if (Math.abs(sbd - sw.radius) < 25) {
-            sb.hp -= 1.0;
-            this.spawnBurstParticles(sb.x, sb.y, sb.color, 6, 'slash');
-            if (sb.hp <= 0) {
-              this.boss.shieldBlocks.splice(k, 1);
-              this.grid.applyExplosion(sb.x, sb.y, 20, 110);
+            if (!sw.hitTargets.has(sb)) {
+              sw.hitTargets.add(sb);
+              sb.hp -= 3.0; // Moderate shield damage from shockwave
+              this.spawnBurstParticles(sb.x, sb.y, sb.color, 6, 'slash');
+              if (sb.hp <= 0) {
+                this.boss.shieldBlocks.splice(k, 1);
+                this.grid.applyExplosion(sb.x, sb.y, 20, 110);
+              }
             }
           }
         }
@@ -4195,19 +4769,22 @@ class GameEngine {
 
       const d = Vec.dist(sw.x, sw.y, this.boss.x, this.boss.y);
       if (Math.abs(d - sw.radius) < 35) {
-        this.bossHasBeenHit = true;
-        let dmg = 3.0;
-        if (this.boss.type === 'leviathan') {
-          const activeSegs = this.boss.segments.filter(s => !s.isSevered).length;
-          if (activeSegs > 0) dmg *= 0.15;
-        } else if (this.boss.type === 'vortex') {
-          const activeShields = this.boss.shieldBlocks.length;
-          if (activeShields > 0) dmg *= 0.05; // 95% reduction
-        }
-        this.boss.hp -= dmg;
-        this.spawnBurstParticles(this.boss.x, this.boss.y, this.boss.color, 8, 'slash');
-        if (this.boss.hp <= 0) {
-          this.defeatBoss();
+        if (!sw.hitTargets.has(this.boss)) {
+          sw.hitTargets.add(this.boss);
+          this.bossHasBeenHit = true;
+          let dmg = 3.0;
+          if (this.boss.type === 'leviathan') {
+            const activeSegs = this.boss.segments.filter(s => !s.isSevered).length;
+            if (activeSegs > 0) dmg *= 0.15;
+          } else if (this.boss.type === 'vortex') {
+            const activeShields = this.boss.shieldBlocks.length;
+            if (activeShields > 0) dmg *= 0.05; // 95% reduction
+          }
+          this.boss.hp -= dmg;
+          this.spawnBurstParticles(this.boss.x, this.boss.y, this.boss.color, 8, 'slash');
+          if (this.boss.hp <= 0) {
+            this.defeatBoss();
+          }
         }
       }
     }
@@ -4262,7 +4839,12 @@ class GameEngine {
         <p class="card-desc">${up.desc}</p>
       `;
       
-      card.addEventListener('click', () => this.applyUpgradeSelection(id));
+      const selectUpgrade = (e) => {
+        e.preventDefault();
+        this.applyUpgradeSelection(id);
+      };
+      card.addEventListener('click', selectUpgrade);
+      card.addEventListener('touchstart', selectUpgrade, { passive: false });
       this.dom.cardSlots.appendChild(card);
     });
 
@@ -4362,6 +4944,11 @@ class GameEngine {
       const screenY = e.y - camY + halfH;
       
       if (screenX >= -50 && screenX <= this.width + 50 && screenY >= -50 && screenY <= this.height + 50) {
+        if (e.isLinkedProtected && !e.sliced) {
+          this.spawnBurstParticles(e.x, e.y, '#ffe600', 10, 'wallSpark');
+          window.audio.playSe('se_aim');
+          continue;
+        }
         e.hp -= 10;
         if (e.hp <= 0) {
           e.sliced = true;
@@ -4641,19 +5228,31 @@ class GameEngine {
     const roll = Math.random();
     let type = 'basic';
     
-    // Spawn weights: Serpent, Jellyfish, Heavies, Basics
+    // Spawn weights: Serpent, Jellyfish, Heavies, Basics, Linker, Phantom
     if (this.score > 28000) {
-      if (roll < 0.22) type = 'basic';
-      else if (roll < 0.44) type = 'jellyfish';
-      else if (roll < 0.76) type = 'serpent';
-      else type = 'heavy';
-    } else if (this.score > 9000) {
+      if (roll < 0.15) type = 'basic';
+      else if (roll < 0.30) type = 'jellyfish';
+      else if (roll < 0.50) type = 'serpent';
+      else if (roll < 0.68) type = 'heavy';
+      else if (roll < 0.84) type = 'linker';
+      else type = 'phantom';
+    } else if (this.score > 12000) {
+      if (roll < 0.20) type = 'basic';
+      else if (roll < 0.40) type = 'jellyfish';
+      else if (roll < 0.65) type = 'serpent';
+      else if (roll < 0.80) type = 'heavy';
+      else if (roll < 0.90) type = 'linker';
+      else type = 'phantom';
+    } else if (this.score > 5000) {
       if (roll < 0.30) type = 'basic';
-      else if (roll < 0.60) type = 'jellyfish';
-      else type = 'serpent';
-    } else if (this.score > 2000) {
+      else if (roll < 0.55) type = 'jellyfish';
+      else if (roll < 0.80) type = 'serpent';
+      else if (roll < 0.92) type = 'linker';
+      else type = 'phantom';
+    } else if (this.score > 1500) {
       if (roll < 0.50) type = 'basic';
-      else type = 'jellyfish';
+      else if (roll < 0.85) type = 'jellyfish';
+      else type = 'linker';
     }
     
     let newEnemy = null;
@@ -4661,6 +5260,10 @@ class GameEngine {
       newEnemy = new JellyfishEnemy(x, y);
     } else if (type === 'serpent') {
       newEnemy = new SerpentEnemy(x, y);
+    } else if (type === 'linker') {
+      newEnemy = new LinkerEnemy(x, y);
+    } else if (type === 'phantom') {
+      newEnemy = new PhantomEnemy(x, y);
     } else {
       newEnemy = new HexEnemy(x, y, type);
     }
@@ -4791,7 +5394,7 @@ class GameEngine {
       const dist = Math.hypot(dx, dy);
       
       if (dist > 18) {
-        const angle = Math.atan2(dy, dx);
+        const angle = Math.atan2(-dy, -dx);
         const dashDist = Math.min(dist * 2.2, this.player.maxDashRange);
         
         const targetX = this.player.x + Math.cos(angle) * dashDist;
@@ -4833,13 +5436,10 @@ class GameEngine {
         const dx = this.mouse.x - this.mouse.dragStart.x;
         const dy = this.mouse.y - this.mouse.dragStart.y;
         if (Math.hypot(dx, dy) > 18) {
-          angle = Math.atan2(dy, dx);
+          angle = Math.atan2(-dy, -dx);
         }
       } else if (this.player.state === 'dashing') {
-        angle = Math.atan2(
-          this.player.dashTarget.y - this.player.dashStart.y,
-          this.player.dashTarget.x - this.player.dashStart.x
-        );
+        angle = Math.atan2(this.player.vy, this.player.vx);
       } else if (speed > 0.4) {
         angle = Math.atan2(this.player.vy, this.player.vx);
       }
