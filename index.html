@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>NEON SLINGER: HYPER DASH</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Meta tags for SEO -->
+    <meta name="description" content="Hypersonic drag-and-slice neo-danmaku action game. Slice bullets, trigger chains, defeat massive boss overlords, and adapt with level-up upgrades.">
+    <meta name="keywords" content="HTML5, Canvas, Web Audio API, Synthwave, Cyberpunk, Game Juice, Roguelite, Boss Battle">
+</head>
+<body>
+    <!-- CRT scanning effect -->
+    <div class="crt-overlay"></div>
+    
+    <!-- Full-screen dynamic game container -->
+    <div id="game-container">
+        <canvas id="game-canvas"></canvas>
+        
+        <!-- Screen flash effect container (hit, damage) -->
+        <div id="flash-overlay" class="screen-flash"></div>
+        
+        <!-- Fever border indicator -->
+        <div id="fever-overlay"></div>
+        
+        <!-- Bullet Time matrix vignette -->
+        <div id="matrix-vignette"></div>
+
+        <!-- Boss overdrive alert strobe -->
+        <div id="overdrive-overlay"></div>
+
+        
+        <!-- Large fever splash text -->
+        <div id="fever-splash">HYPER FEVER</div>
+        
+        <!-- Boss Warning Siren Overlay -->
+        <div id="boss-warning-overlay">
+            <div class="boss-warning-box">
+                <div class="boss-warning-text">⚠️ WARNING ⚠️</div>
+                <div class="boss-warning-subtext">NEON OVERLORD INBOUND</div>
+            </div>
+        </div>
+        
+        <!-- Landing / Start Menu Screen -->
+        <div id="menu-screen" class="glass-panel">
+            <h1 class="title-glow" id="main-title">NEON SLINGER</h1>
+            <div class="subtitle-glow">HYPER DASH</div>
+            
+            <button class="btn-primary" id="start-btn">UNLOCK SYSTEM & PLAY</button>
+            <div id="loader-msg">READY TO ENGAGE</div>
+            
+            <div class="instructions">
+                <strong>[HOW TO PLAY]</strong><br>
+                1. <strong>ドラッグ（長押し）</strong>して時間を減速（弾幕見極め）<br>
+                2. <strong>引いて狙う</strong>（軌道ベクトルを描く）<br>
+                3. <strong>リリース</strong>で超高速ダッシュ斬り！滑らかな慣性物理で移動！<br>
+                <br>
+                <span>★ 弾を斬ると「追尾弾」に変換され大連鎖誘発！ボス弾幕を斬りまくって撃ち返せ！<br>
+                ★ レベルアップで <strong>強靭なアップグレード</strong> を選択！ドローンや衝撃波を展開！<br>
+                ★ [SPACE] またはダブルクリックで画面全域の弾を一掃する <strong>メガEMPボム</strong> 発動！<br>
+                ★ スコアが <strong>20,000点</strong> に達すると、巨大ボス <strong>『NEON OVERLORD』</strong> が出現！</span>
+            </div>
+        </div>
+        
+        <!-- Level Up Modal Choice Screen -->
+        <div id="level-up-screen">
+            <h2 class="level-up-title">SYSTEM UPGRADE</h2>
+            <div class="level-up-subtitle">CHOOSE AN AUXILIARY SYSTEM MODULE TO INSTALL</div>
+            <div class="card-container" id="upgrade-card-slots">
+                <!-- Randomized card items will be injected via javascript -->
+            </div>
+        </div>
+        
+        <!-- HUD Overlay (Game Stats) -->
+        <div id="hud-overlay">
+            <div class="hud-top">
+                <!-- Score display -->
+                <div class="hud-group">
+                    <span class="hud-label">SCORE</span>
+                    <span class="hud-value-orbitron" id="score-display">000,000</span>
+                </div>
+                
+                <!-- Level / XP -->
+                <div class="hud-group">
+                    <span class="hud-label" id="level-label">LEVEL 01</span>
+                    <div class="bar-container">
+                        <div class="bar-wrapper" style="width: 140px;">
+                            <div class="bar-fill" id="xp-bar-fill" style="width: 0%;"></div>
+                        </div>
+                        <span class="hud-value-orbitron" style="font-size: 1rem;" id="xp-text">00%</span>
+                    </div>
+                </div>
+
+                <!-- Shield/Life bar -->
+                <div class="hud-group">
+                    <span class="hud-label">SHIELD</span>
+                    <div class="bar-container">
+                        <div class="bar-wrapper">
+                            <div class="bar-fill" id="shield-bar-fill" style="width: 100%;"></div>
+                        </div>
+                        <span class="hud-value-orbitron" style="font-size: 1rem; width: 35px; text-align: right;" id="shield-text">100</span>
+                    </div>
+                </div>
+                
+                <!-- Bullet Dilation Core Energy bar -->
+                <div class="hud-group">
+                    <span class="hud-label">CORE ENERGY</span>
+                    <div class="bar-container">
+                        <div class="bar-wrapper" style="width: 110px;">
+                            <div class="bar-fill" id="energy-bar-fill" style="width: 100%;"></div>
+                        </div>
+                        <span class="hud-value-orbitron" style="font-size: 1rem; width: 35px; text-align: right;" id="energy-text">100</span>
+                    </div>
+                </div>
+
+                <!-- EMP Mega-Bomb charge bar -->
+                <div class="hud-group">
+                    <span class="hud-label">EMP BOMB</span>
+                    <div class="bar-container">
+                        <div class="bar-wrapper" style="width: 100px;">
+                            <div class="bar-fill" id="bomb-bar-fill" style="width: 0%;"></div>
+                        </div>
+                        <span class="hud-value-orbitron" style="font-size: 1rem; width: 35px; text-align: right;" id="bomb-text">0%</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Boss Health HUD (Top Center) -->
+            <div id="boss-hud">
+                <span class="boss-name" id="boss-name-label">NEON OVERLORD</span>
+                <div class="boss-bar-wrapper">
+                    <div class="boss-bar-fill" id="boss-hp-fill" style="width: 100%;"></div>
+                </div>
+            </div>
+            
+            <!-- Super Bomb alert indicator -->
+            <div id="bomb-alert-hint">BOMB READY [ SPACEBAR / DOUBLE CLICK ]</div>
+            
+            <!-- Floating Combo counter -->
+            <div id="combo-container">
+                <span class="combo-count" id="combo-count-text">0</span>
+                <span class="combo-text" id="combo-rating-text">COMBO</span>
+            </div>
+        </div>
+        
+        <!-- Game Over Screen -->
+        <div id="game-over-screen" class="glass-panel">
+            <h2 class="game-over-title">SYSTEM OFFLINE</h2>
+            <div class="score-summary">
+                <div class="summary-card">
+                    <span class="hud-label">FINAL SCORE</span>
+                    <span class="summary-score" id="final-score">0</span>
+                </div>
+                <div class="summary-card">
+                    <span class="hud-label">MAX COMBO</span>
+                    <span class="summary-score" id="max-combo" style="color: var(--neon-pink); text-shadow: 0 0 8px rgba(255, 0, 85, 0.4);">0</span>
+                </div>
+            </div>
+            <button class="btn-primary" id="restart-btn" style="background: linear-gradient(135deg, var(--neon-pink) 0%, rgba(255, 0, 85, 0.4) 100%); border-color: var(--neon-pink); box-shadow: 0 0 15px rgba(255, 0, 85, 0.3);">REBOOT SYSTEM</button>
+        </div>
+        
+        <!-- Mute Toggle Icon button -->
+        <div class="audio-toggle" id="audio-toggle" title="Mute/Unmute Audio">
+            <svg id="speaker-icon" viewBox="0 0 24 24">
+                <!-- Speaker Icon -->
+                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+            </svg>
+        </div>
+    </div>
+    
+    <!-- Script Loads -->
+    <script src="audio.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>
