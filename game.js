@@ -3054,6 +3054,1111 @@ class VortexSingularity {
   }
 }
 
+// ==========================================
+// D6. Thrashing Tail Class
+// ==========================================
+class ThrashingTail {
+  constructor(segments, color) {
+    this.segments = segments; // Array of segment nodes
+    this.color = color;
+    this.life = 6000; // 6 seconds
+    this.maxLife = 6000;
+    this.active = true;
+    this.wigglePhase = Math.random() * 100;
+    
+    // Give it a random push momentum
+    const pushAng = Math.random() * Math.PI * 2;
+    const pushSpeed = Math.random() * 4 + 2;
+    this.vx = Math.cos(pushAng) * pushSpeed;
+    this.vy = Math.sin(pushAng) * pushSpeed;
+  }
+
+  update(dt, gameTime, onSpawnBullet, onDebrisEjected) {
+    this.life -= 16.6 * dt;
+    if (this.life <= 0) {
+      this.active = false;
+      return;
+    }
+
+    // High frequency convulsive wriggling phase
+    this.wigglePhase += 0.45 * dt;
+
+    // Apply drift velocity with lower friction to sustain speed
+    this.vx *= Math.pow(0.985, dt);
+    this.vy *= Math.pow(0.985, dt);
+
+    // Occasional sudden huge random leaps/kicks (simulating a thrashing severed tail)
+    if (Math.random() < 0.04 * dt) {
+      const kickAng = Math.random() * Math.PI * 2;
+      const kickForce = Math.random() * 12 + 8;
+      this.vx += Math.cos(kickAng) * kickForce;
+      this.vy += Math.sin(kickAng) * kickForce;
+    }
+
+    // Update positions: the front segment moves with drift + wide thrashing weave
+    if (this.segments.length > 0) {
+      const leader = this.segments[0];
+      
+      leader.x += (this.vx + Math.cos(this.wigglePhase * 1.2) * 14) * dt;
+      leader.y += (this.vy + Math.sin(this.wigglePhase * 1.2) * 14) * dt;
+      
+      leader.x = Vec.clamp(leader.x, 100, CONFIG.arenaSize - 100);
+      leader.y = Vec.clamp(leader.y, 100, CONFIG.arenaSize - 100);
+
+      let prevX = leader.x;
+      let prevY = leader.y;
+      let prevRadius = leader.radius;
+      
+      for (let i = 1; i < this.segments.length; i++) {
+        const seg = this.segments[i];
+        const dx = prevX - seg.x;
+        const dy = prevY - seg.y;
+        const dist = Math.hypot(dx, dy);
+        
+        const gap = (prevRadius + seg.radius) * 0.58;
+        if (dist > gap && dist > 0) {
+          const ratio = gap / dist;
+          seg.x = prevX - dx * ratio;
+          seg.y = prevY - dy * ratio;
+        }
+        
+        // Massive bending wiggle (up to 18px per segment, making it wave wildly)
+        const segWiggle = Math.sin(this.wigglePhase + i * 0.55) * (18 - Math.min(10, i * 0.22));
+        const angle = Math.atan2(dy, dx);
+        seg.x += Math.cos(angle + Math.PI/2) * segWiggle * dt;
+        seg.y += Math.sin(angle + Math.PI/2) * segWiggle * dt;
+
+        prevX = seg.x;
+        prevY = seg.y;
+        prevRadius = seg.radius;
+      }
+    }
+
+    if (Math.random() < 0.25 && this.segments.length > 0) {
+      const rIdx = Math.floor(Math.random() * this.segments.length);
+      onDebrisEjected(this.segments[rIdx].x, this.segments[rIdx].y, this.color, 'wallSpark');
+    }
+
+    const shootChance = this.segments.length > 10 ? 0.28 : 0.15;
+    if (Math.random() < shootChance * dt) {
+      const rIdx = Math.floor(Math.random() * this.segments.length);
+      const seg = this.segments[rIdx];
+      const fireAng = Math.random() * Math.PI * 2;
+      onSpawnBullet(seg.x, seg.y, fireAng);
+    }
+  }
+
+  draw(ctx, cx, cy, w, h) {
+    const halfW = w / 2;
+    const halfH = h / 2;
+    const ratio = this.life / this.maxLife;
+
+    ctx.save();
+    ctx.shadowBlur = 18 * ratio;
+    ctx.shadowColor = this.color;
+    ctx.globalAlpha = Math.min(1.0, ratio * 1.5);
+
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = 2.0;
+    ctx.beginPath();
+    for (let i = 0; i < this.segments.length; i++) {
+      const seg = this.segments[i];
+      const ssx = seg.x - cx + halfW;
+      const ssy = seg.y - cy + halfH;
+      if (i === 0) ctx.moveTo(ssx, ssy);
+      else ctx.lineTo(ssx, ssy);
+    }
+    ctx.stroke();
+
+    for (let i = 0; i < this.segments.length; i++) {
+      const seg = this.segments[i];
+      const ssx = seg.x - cx + halfW;
+      const ssy = seg.y - cy + halfH;
+
+      ctx.save();
+      ctx.translate(ssx, ssy);
+      ctx.fillStyle = this.color;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.8;
+      
+      ctx.beginPath();
+      ctx.arc(0, 0, seg.radius * 0.65, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      
+      if (i % 3 === 0) {
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(seg.radius * 0.65, 0, 3, 0, Math.PI * 2);
+        ctx.arc(-seg.radius * 0.65, 0, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+}
+
+// ==========================================
+// D7. Centipede Overlord Boss Class (Version 7)
+// ==========================================
+class CentipedeOverlord {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.vx = 0;
+    this.vy = 0;
+    this.maxHp = 600;
+    this.hp = 600;
+    this.radius = 95;
+    this.color = '#ffe600';
+    this.type = 'centipede';
+
+    this.state = 'spawning';
+    this.angle = 0;
+    this.attackTimer = 0;
+    this.attackPhase = 0;
+    this.isOverdrive = false;
+
+    this.scaleX = 1.0;
+    this.scaleY = 1.0;
+
+    this.orbitRadius = 450;
+    this.orbitAngle = 0;
+    this.orbitDir = 1;
+
+    this.segments = [];
+    for (let i = 0; i < 50; i++) {
+      this.segments.push({
+        id: i,
+        x: x,
+        y: y,
+        radius: 38 - (i * 0.45),
+        hp: 12,
+        maxHp: 12,
+        color: '#ffe600'
+      });
+    }
+
+    this.explodingSegments = [];
+  }
+
+  update(player, dt, gameTime, onSpawnBullet, onDebrisEjected) {
+    this.updateScales(dt);
+
+    if (this.state === 'spawning') {
+      const d = Vec.dist(this.x, this.y, 1500, 1500);
+      if (d > 10) {
+        const dirX = 1500 - this.x;
+        const dirY = 1500 - this.y;
+        this.x += (dirX / d) * 3.8 * dt;
+        this.y += (dirY / d) * 3.8 * dt;
+        this.angle = Math.atan2(dirY, dirX);
+      } else {
+        this.state = 'orbiting';
+        this.attackTimer = 0;
+        this.attackPhase = 0;
+        this.orbitAngle = Math.atan2(this.y - player.y, this.x - player.x);
+        this.orbitDir = Math.random() < 0.5 ? 1 : -1;
+      }
+      this.updateSegments(dt);
+      this.updateExplodingSegments(dt, player, onDebrisEjected);
+      return;
+    }
+
+    if (this.state === 'defeated') {
+      this.x += (Math.random() - 0.5) * 6 * dt;
+      this.y += (Math.random() - 0.5) * 6 * dt;
+      this.updateSegments(dt);
+      this.updateExplodingSegments(dt, player, onDebrisEjected);
+      if (Math.random() < 0.8) {
+        onDebrisEjected(this.x + (Math.random() - 0.5) * 150, this.y + (Math.random() - 0.5) * 150, this.color, 'wallSpark');
+      }
+      return;
+    }
+
+    if (this.hp < this.maxHp * 0.35 && !this.isOverdrive) {
+      this.isOverdrive = true;
+      this.color = '#ff00aa';
+      window.audio.playSe('se_fever');
+      if (player.gameRef) {
+        player.gameRef.triggerFlash('damage');
+        player.gameRef.shakeIntensity = 28;
+      }
+      this.segments.forEach(seg => {
+        seg.color = '#ff00aa';
+      });
+    }
+
+    if (this.isOverdrive && Math.random() < 0.4) {
+      onDebrisEjected(this.x + (Math.random() - 0.5) * 120, this.y + (Math.random() - 0.5) * 120, 'rgba(255, 0, 170, 0.45)', 'slash');
+    }
+
+    this.attackTimer += 16.6 * dt;
+
+    const dx = player.x - this.x;
+    const dy = player.y - this.y;
+    const dist = Math.hypot(dx, dy);
+
+    if (this.state === 'orbiting') {
+      this.orbitRadius = Vec.lerp(this.orbitRadius, 260, 0.001 * dt);
+      this.orbitAngle += 0.016 * this.orbitDir * dt;
+
+      const targetX = player.x + Math.cos(this.orbitAngle) * this.orbitRadius;
+      const targetY = player.y + Math.sin(this.orbitAngle) * this.orbitRadius;
+
+      const adx = targetX - this.x;
+      const ady = targetY - this.y;
+      const adist = Math.hypot(adx, ady);
+
+      if (adist > 5) {
+        const moveSpeed = this.isOverdrive ? 4.5 : 3.2;
+        this.x += (adx / adist) * moveSpeed * dt;
+        this.y += (ady / adist) * moveSpeed * dt;
+        this.angle = Math.atan2(ady, adx);
+      }
+
+      const spitInterval = this.isOverdrive ? 600 : 1100;
+      if (Math.floor(this.attackTimer) % spitInterval < 16.6) {
+        const ang = Math.atan2(player.y - this.y, player.x - this.x);
+        onSpawnBullet(this.x, this.y, ang);
+        onSpawnBullet(this.x, this.y, ang - 0.3);
+        onSpawnBullet(this.x, this.y, ang + 0.3);
+        window.audio.playSe('se_aim');
+      }
+
+      if (this.attackTimer > 6000) {
+        this.state = 'constricting';
+        this.attackTimer = 0;
+      }
+    } 
+    else if (this.state === 'constricting') {
+      this.orbitRadius = Vec.lerp(this.orbitRadius, 140, 0.008 * dt);
+      this.orbitAngle += 0.024 * this.orbitDir * dt;
+
+      const targetX = player.x + Math.cos(this.orbitAngle) * this.orbitRadius;
+      const targetY = player.y + Math.sin(this.orbitAngle) * this.orbitRadius;
+
+      const adx = targetX - this.x;
+      const ady = targetY - this.y;
+      const adist = Math.hypot(adx, ady);
+
+      if (adist > 5) {
+        const moveSpeed = this.isOverdrive ? 6.0 : 4.5;
+        this.x += (adx / adist) * moveSpeed * dt;
+        this.y += (ady / adist) * moveSpeed * dt;
+        this.angle = Math.atan2(ady, adx);
+      }
+
+      if (Math.floor(this.attackTimer) % 1500 < 16.6) {
+        const bulletNum = this.isOverdrive ? 12 : 8;
+        for (let i = 0; i < bulletNum; i++) {
+          onSpawnBullet(this.x, this.y, (Math.PI * 2 / bulletNum) * i);
+        }
+        if (this.segments.length > 25) {
+          const midSeg = this.segments[Math.floor(this.segments.length / 2)];
+          for (let i = 0; i < bulletNum; i++) {
+            onSpawnBullet(midSeg.x, midSeg.y, (Math.PI * 2 / bulletNum) * i);
+          }
+        }
+        window.audio.playSe('se_bomb');
+      }
+
+      if (this.attackTimer > 4500) {
+        this.state = 'fleeing';
+        this.attackTimer = 0;
+        this.orbitRadius = 450;
+      }
+    } 
+    else if (this.state === 'fleeing') {
+      const targetX = player.x - Math.cos(this.orbitAngle) * 550;
+      const targetY = player.y - Math.sin(this.orbitAngle) * 550;
+
+      const adx = targetX - this.x;
+      const ady = targetY - this.y;
+      const adist = Math.hypot(adx, ady);
+
+      if (adist > 5) {
+        this.x += (adx / adist) * 5.0 * dt;
+        this.y += (ady / adist) * 5.0 * dt;
+        this.angle = Math.atan2(ady, adx);
+      }
+
+      if (Math.floor(this.attackTimer) % 180 < 16.6 && this.segments.length > 0) {
+        const tailSeg = this.segments[this.segments.length - 1];
+        const tailAng = gameTime * 0.007;
+        onSpawnBullet(tailSeg.x, tailSeg.y, tailAng);
+        onSpawnBullet(tailSeg.x, tailSeg.y, tailAng + Math.PI);
+      }
+
+      if (this.attackTimer > 3500) {
+        this.state = 'orbiting';
+        this.attackTimer = 0;
+        this.orbitAngle = Math.atan2(this.y - player.y, this.x - player.x);
+        this.orbitDir = Math.random() < 0.5 ? 1 : -1;
+      }
+    }
+
+    this.updateSegments(dt);
+    this.updateExplodingSegments(dt, player, onDebrisEjected);
+  }
+
+  updateSegments(dt) {
+    let prevX = this.x;
+    let prevY = this.y;
+    let prevRadius = this.radius;
+
+    for (let i = 0; i < this.segments.length; i++) {
+      const seg = this.segments[i];
+      
+      const dx = prevX - seg.x;
+      const dy = prevY - seg.y;
+      const dist = Math.hypot(dx, dy);
+
+      const gap = (prevRadius + seg.radius) * 0.55;
+      if (dist > gap && dist > 0) {
+        const ratio = gap / dist;
+        seg.x = prevX - dx * ratio;
+        seg.y = prevY - dy * ratio;
+      }
+
+      prevX = seg.x;
+      prevY = seg.y;
+      prevRadius = seg.radius;
+    }
+  }
+
+  updateExplodingSegments(dt, player, onDebrisEjected) {
+    for (let i = this.explodingSegments.length - 1; i >= 0; i--) {
+      const es = this.explodingSegments[i];
+      es.timer -= 16.6 * dt;
+      if (es.timer <= 0) {
+        if (player.gameRef) {
+          const game = player.gameRef;
+          game.grid.applyExplosion(es.x, es.y, es.radius * 0.4, es.radius * 2.5, 450);
+          game.shakeIntensity = Math.min(22, game.shakeIntensity + 5);
+          game.spawnBurstParticles(es.x, es.y, es.color, 15, 'shatter');
+          game.shockwaves.push(new Shockwave(es.x, es.y, es.radius * 2.0, es.color));
+          
+          game.gainXP(300);
+          game.player.energy = Math.min(game.player.maxEnergy, game.player.energy + 3.0);
+          window.audio.playSe('se_bomb');
+        }
+        onDebrisEjected(es.x, es.y, es.color, 'legDebris');
+        this.explodingSegments.splice(i, 1);
+      }
+    }
+  }
+
+  updateScales(dt) {
+    this.scaleX = Vec.lerp(this.scaleX, 1.0, 0.1 * dt);
+    this.scaleY = Vec.lerp(this.scaleY, 1.0, 0.1 * dt);
+  }
+
+  damageRecoil(dx, dy, force = 2.0) {
+    this.scaleX = 0.72;
+    this.scaleY = 1.32;
+  }
+
+  severSegment(segIndex, game) {
+    const severedCount = this.segments.length - segIndex;
+    if (severedCount <= 0) return;
+
+    const severedParts = this.segments.slice(segIndex);
+    this.segments.splice(segIndex);
+
+    if (game) {
+      game.thrashingTails.push(new ThrashingTail(severedParts, this.color));
+      game.triggerFlash('hit');
+    }
+
+    this.hp -= severedCount * 8.5;
+  }
+
+  draw(ctx, cx, cy, w, h, player) {
+    const halfW = w / 2;
+    const halfH = h / 2;
+    const sx = this.x - cx + halfW;
+    const sy = this.y - cy + halfH;
+
+    ctx.save();
+    ctx.shadowBlur = this.isOverdrive ? 24 : 16;
+    ctx.shadowColor = this.color;
+
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    let prevSegX = sx;
+    let prevSegY = sy;
+    for (let i = 0; i < this.segments.length; i++) {
+      const seg = this.segments[i];
+      const ssx = seg.x - cx + halfW;
+      const ssy = seg.y - cy + halfH;
+      ctx.moveTo(prevSegX, prevSegY);
+      ctx.lineTo(ssx, ssy);
+      prevSegX = ssx;
+      prevSegY = ssy;
+    }
+    ctx.stroke();
+
+    for (let i = this.segments.length - 1; i >= 0; i--) {
+      const seg = this.segments[i];
+      const ssx = seg.x - cx + halfW;
+      const ssy = seg.y - cy + halfH;
+
+      ctx.save();
+      ctx.translate(ssx, ssy);
+      ctx.fillStyle = seg.color;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.2;
+
+      ctx.beginPath();
+      ctx.arc(0, 0, seg.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(seg.radius * 0.85, 0, 3, 0, Math.PI * 2);
+      ctx.arc(-seg.radius * 0.85, 0, 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(this.angle);
+    ctx.scale(this.scaleX, this.scaleY);
+
+    ctx.fillStyle = this.color;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3.5;
+
+    ctx.beginPath();
+    ctx.moveTo(this.radius * 0.45, -this.radius * 0.3);
+    ctx.lineTo(this.radius * 0.75, 0);
+    ctx.lineTo(this.radius * 0.45, this.radius * 0.3);
+    ctx.lineTo(-this.radius * 0.4, this.radius * 0.45);
+    ctx.lineTo(-this.radius * 0.4, -this.radius * 0.45);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3.5;
+    ctx.beginPath();
+    ctx.moveTo(this.radius * 0.5, -this.radius * 0.2);
+    ctx.quadraticCurveTo(this.radius * 0.9, -this.radius * 0.5, this.radius * 0.8, -this.radius * 0.05);
+    ctx.moveTo(this.radius * 0.5, this.radius * 0.2);
+    ctx.quadraticCurveTo(this.radius * 0.9, this.radius * 0.5, this.radius * 0.8, this.radius * 0.05);
+    ctx.stroke();
+
+    const eyeColor = this.isOverdrive ? (Math.floor(Date.now() * 0.008) % 2 === 0 ? '#ffffff' : '#ff00aa') : '#ff003c';
+    ctx.fillStyle = eyeColor;
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = eyeColor;
+    ctx.beginPath();
+    ctx.arc(this.radius * 0.3, -this.radius * 0.16, 8, 0, Math.PI * 2);
+    ctx.arc(this.radius * 0.3, this.radius * 0.16, 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+
+    this.explodingSegments.forEach(es => {
+      const essx = es.x - cx + halfW;
+      const essy = es.y - cy + halfH;
+      ctx.save();
+      ctx.translate(essx, essy);
+      ctx.fillStyle = (Math.floor(Date.now() / 60) % 2 === 0) ? '#ffffff' : es.color;
+      ctx.shadowColor = es.color;
+      ctx.shadowBlur = 25;
+      ctx.beginPath();
+      ctx.arc(0, 0, es.radius * 1.1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+
+    ctx.restore();
+  }
+}
+
+// ==========================================
+// D8. Cyber Kraken Boss Class (Version 8)
+// ==========================================
+class CyberKraken {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.vx = 0;
+    this.vy = 0;
+    this.maxHp = 900;
+    this.hp = 900;
+    this.radius = 100;
+    this.color = '#b026ff';
+    this.type = 'kraken';
+
+    this.state = 'spawning';
+    this.angle = 0;
+    this.attackTimer = 0;
+    this.attackPhase = 0;
+    this.isOverdrive = false;
+    this.dodgeCooldown = 0;
+
+    this.scaleX = 1.0;
+    this.scaleY = 1.0;
+
+    this.slamTargetX = 0;
+    this.slamTargetY = 0;
+    this.slamTentacleIdx = 0;
+    this.slamProgress = 0;
+
+    this.tentacles = [];
+    const angles = [0, Math.PI / 2, Math.PI, Math.PI * 1.5];
+    for (let t = 0; t < 4; t++) {
+      const segments = [];
+      for (let i = 0; i < 12; i++) {
+        segments.push({
+          id: i,
+          x: x,
+          y: y,
+          radius: 26 - i * 1.5,
+          color: '#b026ff'
+        });
+      }
+      this.tentacles.push({
+        id: t,
+        angleOffset: angles[t],
+        segments: segments,
+        isSevered: false,
+        hp: 30,
+        maxHp: 30,
+        regenTimer: 0
+      });
+    }
+
+    this.explodingSegments = [];
+  }
+
+  update(player, dt, gameTime, onSpawnBullet, onDebrisEjected) {
+    this.updateScales(dt);
+
+    if (this.dodgeCooldown > 0) {
+      this.dodgeCooldown -= 16.6 * dt;
+    }
+
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.vx *= Math.pow(0.85, dt);
+    this.vy *= Math.pow(0.85, dt);
+
+    this.x = Vec.clamp(this.x, 150, CONFIG.arenaSize - 150);
+    this.y = Vec.clamp(this.y, 150, CONFIG.arenaSize - 150);
+
+    if (player.state === 'dashing' && this.state !== 'defeated' && this.state !== 'spawning' && this.dodgeCooldown <= 0) {
+      const distToPlayer = Vec.dist(this.x, this.y, player.x, player.y);
+      if (distToPlayer < 240) {
+        const pSpeed = Math.hypot(player.vx, player.vy);
+        if (pSpeed > 1) {
+          const pdx = player.vx / pSpeed;
+          const pdy = player.vy / pSpeed;
+          
+          let perpX = -pdy;
+          let perpY = pdx;
+          
+          const testX = this.x + perpX * 180;
+          const testY = this.y + perpY * 180;
+          if (testX < 200 || testX > CONFIG.arenaSize - 200 || testY < 200 || testY > CONFIG.arenaSize - 200) {
+            perpX = pdy;
+            perpY = -pdx;
+          }
+          
+          const force = this.isOverdrive ? 19.5 : 13.5;
+          this.vx = perpX * force;
+          this.vy = perpY * force;
+          
+          this.scaleX = 0.52; this.scaleY = 1.62;
+          this.dodgeCooldown = this.isOverdrive ? 700 : 1300;
+          
+          window.audio.playSe('se_dash');
+          if (player.gameRef) {
+            player.gameRef.spawnBurstParticles(this.x, this.y, this.color, 12, 'slash');
+          }
+        }
+      }
+    }
+
+    if (this.state === 'spawning') {
+      const d = Vec.dist(this.x, this.y, 1500, 1500);
+      if (d > 10) {
+        const dirX = 1500 - this.x;
+        const dirY = 1500 - this.y;
+        this.x += (dirX / d) * 3.5 * dt;
+        this.y += (dirY / d) * 3.5 * dt;
+        this.angle = Math.atan2(dirY, dirX);
+      } else {
+        this.state = 'patrolling';
+        this.attackTimer = 0;
+        this.attackPhase = 0;
+      }
+      this.updateTentacles(gameTime, player, dt);
+      return;
+    }
+
+    if (this.state === 'defeated') {
+      this.x += (Math.random() - 0.5) * 6 * dt;
+      this.y += (Math.random() - 0.5) * 6 * dt;
+      this.angle += 0.02 * dt;
+      this.updateTentacles(gameTime, player, dt);
+      if (Math.random() < 0.8) {
+        onDebrisEjected(this.x + (Math.random() - 0.5) * 150, this.y + (Math.random() - 0.5) * 150, this.color, 'wallSpark');
+      }
+      return;
+    }
+
+    if (this.hp < this.maxHp * 0.35 && !this.isOverdrive) {
+      this.isOverdrive = true;
+      this.color = '#ff0055';
+      window.audio.playSe('se_fever');
+      if (player.gameRef) {
+        player.gameRef.triggerFlash('damage');
+        player.gameRef.shakeIntensity = 28;
+      }
+      this.tentacles.forEach(tent => {
+        tent.segments.forEach(seg => {
+          seg.color = '#ff0055';
+        });
+      });
+    }
+
+    if (this.isOverdrive && Math.random() < 0.4) {
+      onDebrisEjected(this.x + (Math.random() - 0.5) * 120, this.y + (Math.random() - 0.5) * 120, 'rgba(255, 0, 85, 0.45)', 'slash');
+    }
+
+    this.attackTimer += 16.6 * dt;
+
+    if (this.state === 'patrolling') {
+      const driftAng = gameTime * 0.0004;
+      const targetX = 1500 + Math.cos(driftAng) * 200;
+      const targetY = 1500 + Math.sin(driftAng * 1.5) * 150;
+      
+      const dx = targetX - this.x;
+      const dy = targetY - this.y;
+      this.x += dx * 0.012 * dt;
+      this.y += dy * 0.012 * dt;
+      this.angle += 0.005 * dt;
+
+      if (Math.floor(this.attackTimer) % 1200 < 16.6) {
+        this.tentacles.forEach(tent => {
+          if (tent.segments.length > 0) {
+            const tip = tent.segments[tent.segments.length - 1];
+            const ang = Math.atan2(player.y - tip.y, player.x - tip.x) + (Math.random() - 0.5) * 0.2;
+            onSpawnBullet(tip.x, tip.y, ang);
+            onSpawnBullet(tip.x, tip.y, ang - 0.2);
+            onSpawnBullet(tip.x, tip.y, ang + 0.2);
+          }
+        });
+        window.audio.playSe('se_aim');
+      }
+
+      const phaseLimit = this.isOverdrive ? 4000 : 6000;
+      if (this.attackTimer >= phaseLimit) {
+        this.attackTimer = 0;
+        this.attackPhase = (this.attackPhase + 1) % 3;
+
+        if (this.attackPhase === 0) {
+          this.state = 'slamming';
+          this.slamProgress = 0;
+          this.slamTentacleIdx = Math.floor(Math.random() * 4);
+          this.slamTargetX = player.x;
+          this.slamTargetY = player.y;
+        } else if (this.attackPhase === 1) {
+          this.state = 'spinning';
+        } else {
+          this.state = 'defending';
+        }
+      }
+    } 
+    else if (this.state === 'slamming') {
+      const dx = 1500 - this.x;
+      const dy = 1500 - this.y;
+      this.x += dx * 0.01 * dt;
+      this.y += dy * 0.01 * dt;
+      this.angle += 0.008 * dt;
+
+      this.slamProgress += 0.012 * dt;
+      
+      if (this.slamProgress >= 1.0) {
+        window.audio.playSe('se_bomb');
+        
+        if (player.gameRef) {
+          player.gameRef.shakeIntensity = 22;
+          player.gameRef.grid.applyExplosion(this.slamTargetX, this.slamTargetY, 40, 200);
+        }
+
+        const pd = Vec.dist(player.x, player.y, this.slamTargetX, this.slamTargetY);
+        if (pd < 90 && player.state !== 'dashing' && player.invincibilityTimer <= 0) {
+          player.gameRef.damagePlayer(25);
+        }
+
+        const burstCount = this.isOverdrive ? 12 : 8;
+        for (let i = 0; i < burstCount; i++) {
+          onSpawnBullet(this.slamTargetX, this.slamTargetY, (Math.PI * 2 / burstCount) * i);
+        }
+
+        this.state = 'patrolling';
+        this.attackTimer = 0;
+      }
+    } 
+    else if (this.state === 'spinning') {
+      const spinSpeed = this.isOverdrive ? 0.055 : 0.038;
+      this.angle += spinSpeed * dt;
+
+      const driftAng = gameTime * 0.0004;
+      const targetX = 1500 + Math.cos(driftAng) * 120;
+      const targetY = 1500 + Math.sin(driftAng * 1.5) * 100;
+      this.x = Vec.lerp(this.x, targetX, 0.02 * dt);
+      this.y = Vec.lerp(this.y, targetY, 0.02 * dt);
+
+      if (Math.floor(this.attackTimer) % 120 < 16.6) {
+        this.tentacles.forEach(tent => {
+          if (tent.segments.length > 0) {
+            const tip = tent.segments[tent.segments.length - 1];
+            const ang = Math.atan2(tip.y - this.y, tip.x - this.x);
+            onSpawnBullet(tip.x, tip.y, ang + Math.PI/2);
+          }
+        });
+      }
+
+      if (this.attackTimer > 5000) {
+        this.state = 'patrolling';
+        this.attackTimer = 0;
+      }
+    } 
+    else if (this.state === 'defending') {
+      // Regenerate HP slowly inside protective cage
+      this.hp = Math.min(this.maxHp, this.hp + 0.35 * dt);
+
+      const dx = player.x - this.x;
+      const dy = player.y - this.y;
+      const dist = Math.hypot(dx, dy);
+      
+      if (dist < 320 && dist > 0) {
+        this.x -= (dx / dist) * 1.5 * dt;
+        this.y -= (dy / dist) * 1.5 * dt;
+      }
+      this.angle += 0.004 * dt;
+
+      const shootRate = this.isOverdrive ? 800 : 1500;
+      if (Math.floor(this.attackTimer) % shootRate < 16.6) {
+        if (player.gameRef) {
+          const game = player.gameRef;
+          const ang = Math.atan2(player.y - this.y, player.x - this.x);
+          game.missiles.push(new HomingMissile(this.x, this.y, ang - 0.35, 5));
+          game.missiles.push(new HomingMissile(this.x, this.y, ang + 0.35, 5));
+        }
+        window.audio.playSe('se_aim');
+      }
+
+      if (this.attackTimer > 4500) {
+        this.state = 'patrolling';
+        this.attackTimer = 0;
+      }
+    }
+
+    // Tentacle regeneration logic
+    if (this.state !== 'defeated') {
+      this.tentacles.forEach(tent => {
+        if (tent.segments.length < 12) {
+          tent.regenTimer += 16.6 * dt;
+          if (tent.regenTimer >= 1000) {
+            tent.regenTimer = 0;
+            const newIdx = tent.segments.length;
+            const baseAng = this.angle + tent.angleOffset;
+            const spawnX = this.x + Math.cos(baseAng) * (this.radius * 0.42);
+            const spawnY = this.y + Math.sin(baseAng) * (this.radius * 0.42);
+            tent.segments.push({
+              id: newIdx,
+              x: spawnX,
+              y: spawnY,
+              radius: 26 - newIdx * 1.5,
+              color: this.color
+            });
+            if (tent.segments.length === 12) {
+              tent.isSevered = false;
+            }
+            if (player.gameRef) {
+              player.gameRef.spawnBurstParticles(spawnX, spawnY, '#ffe600', 5, 'wallSpark');
+            }
+          }
+        }
+      });
+    }
+
+    this.updateTentacles(gameTime, player, dt);
+  }
+
+  updateTentacles(gameTime, player, dt) {
+    const L = 30;
+
+    for (let t = 0; t < 4; t++) {
+      const tent = this.tentacles[t];
+      if (tent.segments.length === 0) continue;
+
+      const baseAng = this.angle + tent.angleOffset;
+      const anchorX = this.x + Math.cos(baseAng) * (this.radius * 0.42);
+      const anchorY = this.y + Math.sin(baseAng) * (this.radius * 0.42);
+
+      let targetTipX = null;
+      let targetTipY = null;
+
+      if (this.state === 'slamming' && t === this.slamTentacleIdx) {
+        if (this.slamProgress < 0.45) {
+          const pullRatio = this.slamProgress / 0.45;
+          targetTipX = anchorX - Math.cos(baseAng) * 60 + Math.sin(gameTime * 0.08) * 45;
+          targetTipY = anchorY - Math.sin(baseAng) * 60 + Math.cos(gameTime * 0.08) * 45;
+        } else {
+          const strikeRatio = (this.slamProgress - 0.45) / 0.55;
+          targetTipX = Vec.lerp(anchorX + Math.cos(baseAng) * 120, this.slamTargetX, strikeRatio);
+          targetTipY = Vec.lerp(anchorY + Math.sin(baseAng) * 120, this.slamTargetY, strikeRatio);
+        }
+      } 
+      else if (this.state === 'spinning') {
+        targetTipX = anchorX + Math.cos(baseAng) * 320;
+        targetTipY = anchorY + Math.sin(baseAng) * 320;
+      } 
+      else if (this.state === 'defending') {
+        const coilAngle = baseAng + Math.PI/2 + Math.sin(gameTime * 0.02) * 0.4;
+        targetTipX = this.x + Math.cos(coilAngle) * 120;
+        targetTipY = this.y + Math.sin(coilAngle) * 120;
+      }
+
+      if (targetTipX !== null) {
+        const tipIdx = tent.segments.length - 1;
+        tent.segments[tipIdx].x = targetTipX;
+        tent.segments[tipIdx].y = targetTipY;
+
+        for (let i = tipIdx - 1; i >= 0; i--) {
+          const s = tent.segments[i];
+          const next = tent.segments[i + 1];
+          const dx = next.x - s.x;
+          const dy = next.y - s.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist > 0) {
+            s.x = next.x - (dx / dist) * L;
+            s.y = next.y - (dy / dist) * L;
+          }
+        }
+
+        const base = tent.segments[0];
+        base.x = anchorX;
+        base.y = anchorY;
+
+        for (let i = 1; i < tent.segments.length; i++) {
+          const s = tent.segments[i];
+          const prev = tent.segments[i - 1];
+          const dx = s.x - prev.x;
+          const dy = s.y - prev.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist > 0) {
+            s.x = prev.x + (dx / dist) * L;
+            s.y = prev.y + (dy / dist) * L;
+          }
+        }
+      } 
+      else {
+        let prevX = anchorX;
+        let prevY = anchorY;
+
+        for (let i = 0; i < tent.segments.length; i++) {
+          const seg = tent.segments[i];
+          const dx = prevX - seg.x;
+          const dy = prevY - seg.y;
+          const dist = Math.hypot(dx, dy);
+
+          const gap = L * 0.85;
+          if (dist > gap && dist > 0) {
+            const ratio = gap / dist;
+            seg.x = prevX - dx * ratio;
+            seg.y = prevY - dy * ratio;
+          }
+
+          const wPhase = gameTime * 0.005 + i * 0.45 + tent.id * 1.5;
+          const wiggle = Math.sin(wPhase) * 6.5;
+          const normalAng = baseAng + Math.PI/2;
+          seg.x += Math.cos(normalAng) * wiggle * dt;
+          seg.y += Math.sin(normalAng) * wiggle * dt;
+
+          prevX = seg.x;
+          prevY = seg.y;
+        }
+      }
+    }
+  }
+
+  updateScales(dt) {
+    this.scaleX = Vec.lerp(this.scaleX, 1.0, 0.1 * dt);
+    this.scaleY = Vec.lerp(this.scaleY, 1.0, 0.1 * dt);
+  }
+
+  damageRecoil(dx, dy, force = 2.0) {
+    this.scaleX = 0.75;
+    this.scaleY = 1.25;
+  }
+
+  severTentacle(tentacleIdx, segmentIdx, game) {
+    const tent = this.tentacles[tentacleIdx];
+    if (!tent || tent.segments.length <= segmentIdx) return;
+
+    const severedCount = tent.segments.length - segmentIdx;
+    
+    if (game) {
+      for (let i = segmentIdx; i < tent.segments.length; i++) {
+        const seg = tent.segments[i];
+        game.spawnBurstParticles(seg.x, seg.y, this.color, 8, 'shatter');
+        game.particles.push(new Particle(seg.x, seg.y, this.color, 'legDebris'));
+      }
+      game.triggerFlash('hit');
+    }
+
+    tent.segments.splice(segmentIdx);
+    this.hp -= severedCount * 2.0;
+
+    if (tent.segments.length === 0) {
+      tent.isSevered = true;
+      this.hp -= 15;
+    }
+  }
+
+  draw(ctx, cx, cy, w, h, player) {
+    const halfW = w / 2;
+    const halfH = h / 2;
+    const sx = this.x - cx + halfW;
+    const sy = this.y - cy + halfH;
+
+    ctx.save();
+    ctx.shadowBlur = this.isOverdrive ? 26 : 18;
+    ctx.shadowColor = this.color;
+
+    for (let t = 0; t < 4; t++) {
+      const tent = this.tentacles[t];
+      if (tent.segments.length === 0) continue;
+
+      ctx.save();
+      ctx.strokeStyle = this.color;
+      ctx.lineWidth = 4.5;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      ctx.beginPath();
+      const baseAng = this.angle + tent.angleOffset;
+      const anchorX = this.x + Math.cos(baseAng) * (this.radius * 0.42) - cx + halfW;
+      const anchorY = this.y + Math.sin(baseAng) * (this.radius * 0.42) - cy + halfH;
+      ctx.moveTo(anchorX, anchorY);
+
+      tent.segments.forEach(seg => {
+        ctx.lineTo(seg.x - cx + halfW, seg.y - cy + halfH);
+      });
+      ctx.stroke();
+
+      tent.segments.forEach((seg, idx) => {
+        const ssx = seg.x - cx + halfW;
+        const ssy = seg.y - cy + halfH;
+        ctx.save();
+        ctx.translate(ssx, ssy);
+        ctx.fillStyle = seg.color;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+
+        ctx.beginPath();
+        ctx.arc(0, 0, seg.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        if (idx === tent.segments.length - 1) {
+          ctx.fillStyle = '#ffffff';
+          ctx.shadowBlur = 10;
+          ctx.shadowColor = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(0, 0, 5.0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.restore();
+      });
+
+      ctx.restore();
+    }
+
+    if (this.state === 'slamming' && this.slamProgress < 1.0) {
+      const tent = this.tentacles[this.slamTentacleIdx];
+      if (tent && tent.segments.length > 0) {
+        const tip = tent.segments[tent.segments.length - 1];
+        const tipX = tip.x - cx + halfW;
+        const tipY = tip.y - cy + halfH;
+        const tx = this.slamTargetX - cx + halfW;
+        const ty = this.slamTargetY - cx + halfH;
+
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 0, 85, 0.7)';
+        ctx.lineWidth = 4;
+        ctx.setLineDash([12, 8]);
+        ctx.beginPath();
+        ctx.moveTo(tipX, tipY);
+        ctx.lineTo(tx, ty);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#ffe600';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+        ctx.strokeRect(tx - 20, ty - 20, 40, 40);
+        ctx.restore();
+      }
+    }
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(this.angle);
+    ctx.scale(this.scaleX, this.scaleY);
+
+    ctx.fillStyle = this.color;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 4.0;
+
+    ctx.beginPath();
+    const coreRad = this.radius * 0.45;
+    for (let i = 0; i < 16; i++) {
+      const a = (Math.PI * 2 / 16) * i;
+      const offset = Math.sin(a * 4 + Date.now() * 0.005) * 5.0;
+      const rx = Math.cos(a) * (coreRad + offset);
+      const ry = Math.sin(a) * (coreRad + offset);
+      if (i === 0) ctx.moveTo(rx, ry);
+      else ctx.lineTo(rx, ry);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    const pupilColor = this.isOverdrive ? (Math.floor(Date.now() * 0.008) % 2 === 0 ? '#ffffff' : '#ff0055') : '#ffe600';
+    ctx.fillStyle = pupilColor;
+    ctx.shadowBlur = 18;
+    ctx.shadowColor = pupilColor;
+    ctx.beginPath();
+    ctx.arc(0, 0, 16, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 24, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.restore();
+    ctx.restore();
+  }
+}
+
 // Helper color lookup
 function varColor(name) {
   if (name === 'pink') return '#ff0055';
@@ -3259,6 +4364,7 @@ class GameEngine {
     this.lasers = [];
     this.shockwaves = [];
     this.bossPlasmaRings = [];
+    this.thrashingTails = [];
     
     // V5 Hyper Juice State Variables
     this.menuParticles = [];
@@ -3282,6 +4388,7 @@ class GameEngine {
     this.bossScoreMilestone = 20000;
     this.bossSpawnCount = 0;
     this.bossHasBeenHit = false;
+    this.loopCount = 1;
     
     this.feverActive = false;
     this.mouse = { x: 0, y: 0, isDown: false, dragStart: { x: 0, y: 0 } };
@@ -3296,6 +4403,7 @@ class GameEngine {
       restartBtn: document.getElementById('restart-btn'),
       audioBtn: document.getElementById('audio-toggle'),
       score: document.getElementById('score-display'),
+      loop: document.getElementById('loop-display'),
       levelLabel: document.getElementById('level-label'),
       xpBar: document.getElementById('xp-bar-fill'),
       xpText: document.getElementById('xp-text'),
@@ -3577,6 +4685,7 @@ class GameEngine {
     this.lasers = [];
     this.shockwaves = [];
     this.bossPlasmaRings = [];
+    this.thrashingTails = [];
     this.grid = new WarpGrid();
     
     this.boss = null;
@@ -3584,6 +4693,7 @@ class GameEngine {
     this.bossScoreMilestone = 20000;
     this.bossSpawnCount = 0;
     this.bossHasBeenHit = false;
+    this.loopCount = 1;
     
     this.dom.menu.style.opacity = '0';
     setTimeout(() => { this.dom.menu.style.display = 'none'; }, 500);
@@ -3774,6 +4884,38 @@ class GameEngine {
       }
     }
 
+    // Update Thrashing Tails
+    for (let i = this.thrashingTails.length - 1; i >= 0; i--) {
+      const tt = this.thrashingTails[i];
+      tt.update(dt, this.gameTime, (bx, by, ang) => {
+        if (this.bullets.length < CONFIG.maxBullets) {
+          this.bullets.push(new Bullet(bx, by, ang, 3.5));
+        }
+      }, (dbx, dby, color, type) => {
+        this.particles.push(new Particle(dbx, dby, color, type));
+      });
+      
+      if (this.player.state !== 'dashing') {
+        for (let j = 0; j < tt.segments.length; j++) {
+          const seg = tt.segments[j];
+          const d = Vec.dist(this.player.x, this.player.y, seg.x, seg.y);
+          if (d < seg.radius + CONFIG.playerSize) {
+            this.damagePlayer(15);
+            break;
+          }
+        }
+      }
+
+      if (!tt.active) {
+        tt.segments.forEach(seg => {
+          this.grid.applyExplosion(seg.x, seg.y, 15, 120);
+          this.spawnBurstParticles(seg.x, seg.y, tt.color, 10, 'shatter');
+        });
+        this.thrashingTails.splice(i, 1);
+        window.audio.playSe('se_bomb');
+      }
+    }
+
     // Chronos Tesla Synergy auto-shock inside Chronos Field
     if (this.player.chronosTeslaSynergy && Math.floor(this.gameTime) % 60 < 16.6 * dt) {
       for (let i = 0; i < this.enemies.length; i++) {
@@ -3843,10 +4985,67 @@ class GameEngine {
         } else if (this.nextBossType === 'leviathan') {
           this.boss = new ColossusLeviathan(1500, 1500);
           if (bossNameLabel) bossNameLabel.textContent = 'COLOSSUS LEVIATHAN';
-        } else {
+        } else if (this.nextBossType === 'vortex') {
           this.boss = new VortexSingularity(1500, 1500);
           if (bossNameLabel) bossNameLabel.textContent = 'VORTEX SINGULARITY';
+        } else if (this.nextBossType === 'centipede') {
+          this.boss = new CentipedeOverlord(1500, 1500);
+          if (bossNameLabel) bossNameLabel.textContent = 'CENTIPEDE OVERLORD';
+        } else if (this.nextBossType === 'kraken') {
+          this.boss = new CyberKraken(1500, 1500);
+          if (bossNameLabel) bossNameLabel.textContent = 'CYBER KRAKEN';
         }
+        
+        if (this.boss && this.loopCount > 1) {
+          const factor = 1 + (this.loopCount - 1) * 0.6;
+          this.boss.maxHp = Math.ceil(this.boss.maxHp * factor);
+          this.boss.hp = this.boss.maxHp;
+          
+          if (this.boss.legs) {
+            this.boss.legs.forEach(leg => {
+              leg.maxHp = Math.ceil(leg.maxHp * factor);
+              leg.hp = leg.maxHp;
+            });
+          }
+          if (this.boss.segments) {
+            this.boss.segments.forEach(seg => {
+              if (seg.maxHp !== undefined) {
+                seg.maxHp = Math.ceil(seg.maxHp * factor);
+                seg.hp = seg.maxHp;
+              } else if (seg.hp !== undefined) {
+                seg.hp = Math.ceil(seg.hp * factor);
+              }
+            });
+          }
+          if (this.boss.shieldBlocks) {
+            this.boss.shieldBlocks.forEach(sb => {
+              if (sb.maxHp !== undefined) {
+                sb.maxHp = Math.ceil(sb.maxHp * factor);
+                sb.hp = sb.maxHp;
+              } else if (sb.hp !== undefined) {
+                sb.hp = Math.ceil(sb.hp * factor);
+              }
+            });
+          }
+          if (this.boss.tentacles) {
+            this.boss.tentacles.forEach(tent => {
+              if (tent.maxHp !== undefined) {
+                tent.maxHp = Math.ceil(tent.maxHp * factor);
+                tent.hp = tent.maxHp;
+              } else if (tent.hp !== undefined) {
+                tent.hp = Math.ceil(tent.hp * factor);
+              }
+              if (tent.segments) {
+                tent.segments.forEach(seg => {
+                  if (seg.hp !== undefined) {
+                    seg.hp = Math.ceil(seg.hp * factor);
+                  }
+                });
+              }
+            });
+          }
+        }
+        
         this.bossSpawnCount++;
         
         this.dom.bossHud.style.display = 'flex';
@@ -4424,6 +5623,95 @@ class GameEngine {
             }
           }
         }
+      } else if (this.boss.type === 'centipede') {
+        for (let i = 0; i < this.boss.segments.length; i++) {
+          const seg = this.boss.segments[i];
+          let t = Vec.clamp(((seg.x - x1) * dx + (seg.y - y1) * dy) / lenSq, 0, 1);
+          const cx = x1 + t * dx;
+          const cy = y1 + t * dy;
+          const dist = Vec.dist(seg.x, seg.y, cx, cy);
+          
+          if (dist < seg.radius + sliceRadius) {
+            if (!this.player.slicedTargets.has(seg)) {
+              this.player.slicedTargets.add(seg);
+              this.boss.severSegment(i, this);
+              this.incrementCombo();
+              
+              if (this.boss.hp <= 0) {
+                this.defeatBoss();
+              }
+              break;
+            }
+          }
+        }
+        
+        let t = Vec.clamp(((this.boss.x - x1) * dx + (this.boss.y - y1) * dy) / lenSq, 0, 1);
+        const cx = x1 + t * dx;
+        const cy = y1 + t * dy;
+        if (Vec.dist(this.boss.x, this.boss.y, cx, cy) < this.boss.radius + sliceRadius) {
+          if (!this.player.slicedTargets.has(this.boss)) {
+            this.player.slicedTargets.add(this.boss);
+            this.boss.hp -= 20.0;
+            this.bossHasBeenHit = true;
+            this.boss.damageRecoil(dx, dy);
+            
+            this.spawnBurstParticles(this.boss.x, this.boss.y, this.boss.color, 16, 'slash');
+            this.grid.applyExplosion(this.boss.x, this.boss.y, 30, 160);
+            window.audio.playSe('se_hit');
+            
+            if (this.boss.hp <= 0) {
+              this.defeatBoss();
+            }
+          }
+        }
+      } else if (this.boss.type === 'kraken') {
+        for (let tIdx = 0; tIdx < 4; tIdx++) {
+          const tent = this.boss.tentacles[tIdx];
+          if (tent.isSevered) continue;
+          
+          for (let i = 0; i < tent.segments.length; i++) {
+            const seg = tent.segments[i];
+            let t = Vec.clamp(((seg.x - x1) * dx + (seg.y - y1) * dy) / lenSq, 0, 1);
+            const cx = x1 + t * dx;
+            const cy = y1 + t * dy;
+            const dist = Vec.dist(seg.x, seg.y, cx, cy);
+            
+            if (dist < seg.radius + sliceRadius) {
+              if (!this.player.slicedTargets.has(seg)) {
+                this.player.slicedTargets.add(seg);
+                this.boss.severTentacle(tIdx, i, this);
+                this.incrementCombo();
+                
+                if (this.boss.hp <= 0) {
+                  this.defeatBoss();
+                }
+                break;
+              }
+            }
+          }
+        }
+        
+        let t = Vec.clamp(((this.boss.x - x1) * dx + (this.boss.y - y1) * dy) / lenSq, 0, 1);
+        const cx = x1 + t * dx;
+        const cy = y1 + t * dy;
+        if (Vec.dist(this.boss.x, this.boss.y, cx, cy) < this.boss.radius + sliceRadius) {
+          if (!this.player.slicedTargets.has(this.boss)) {
+            this.player.slicedTargets.add(this.boss);
+            const activeTents = this.boss.tentacles.filter(tn => !tn.isSevered).length;
+            const dmgMult = activeTents > 0 ? 0.25 : 1.0;
+            this.boss.hp -= 24.0 * dmgMult;
+            this.bossHasBeenHit = true;
+            this.boss.damageRecoil(dx, dy);
+            
+            this.spawnBurstParticles(this.boss.x, this.boss.y, this.boss.color, 16, 'slash');
+            this.grid.applyExplosion(this.boss.x, this.boss.y, 30, 160);
+            window.audio.playSe('se_hit');
+            
+            if (this.boss.hp <= 0) {
+              this.defeatBoss();
+            }
+          }
+        }
       } else if (this.boss.type === 'vortex') {
         // C. Slicing Vortex Singularity Core
         let t = Vec.clamp(((this.boss.x - x1) * dx + (this.boss.y - y1) * dy) / lenSq, 0, 1);
@@ -4980,6 +6268,36 @@ class GameEngine {
               break;
             }
           }
+        } else if (this.boss.type === 'centipede') {
+          this.boss.hp -= 80.0; // core damage
+          this.bossHasBeenHit = true;
+          this.boss.segments.forEach(seg => {
+            seg.hp -= 10;
+          });
+          for (let k = 0; k < this.boss.segments.length; k++) {
+            if (this.boss.segments[k].hp <= 0) {
+              this.boss.severSegment(k, this);
+              break;
+            }
+          }
+        } else if (this.boss.type === 'kraken') {
+          const activeTents = this.boss.tentacles.filter(tn => !tn.isSevered).length;
+          const armorMult = activeTents > 0 ? 0.25 : 1.0;
+          this.boss.hp -= 80.0 * armorMult;
+          this.bossHasBeenHit = true;
+          this.boss.tentacles.forEach((tent, tIdx) => {
+            if (!tent.isSevered) {
+              tent.segments.forEach(seg => {
+                seg.hp -= 10;
+              });
+              for (let k = 0; k < tent.segments.length; k++) {
+                if (tent.segments[k].hp <= 0) {
+                  this.boss.severTentacle(tIdx, k, this);
+                  break;
+                }
+              }
+            }
+          });
         } else if (this.boss.type === 'vortex') {
           const activeShields = this.boss.shieldBlocks.length;
           const armorMult = activeShields > 0 ? 0.05 : 1.0;
@@ -5014,15 +6332,17 @@ class GameEngine {
     this.bossHasBeenHit = false;
     
     // Choose next boss based on count
-    const cycle = this.bossSpawnCount % 3;
+    const cycle = this.bossSpawnCount % 5;
     let bossType = 'spider';
     if (cycle === 1) bossType = 'leviathan';
     else if (cycle === 2) bossType = 'vortex';
+    else if (cycle === 3) bossType = 'centipede';
+    else if (cycle === 4) bossType = 'kraken';
     this.nextBossType = bossType;
     
     // Update HTML overlay classes & text
     const overlay = this.dom.bossWarningOverlay;
-    overlay.classList.remove('warning-spider', 'warning-leviathan', 'warning-vortex');
+    overlay.classList.remove('warning-spider', 'warning-leviathan', 'warning-vortex', 'warning-centipede', 'warning-kraken');
     const subtext = overlay.querySelector('.boss-warning-subtext');
     
     if (bossType === 'spider') {
@@ -5031,9 +6351,15 @@ class GameEngine {
     } else if (bossType === 'leviathan') {
       overlay.classList.add('warning-leviathan');
       if (subtext) subtext.textContent = 'COLOSSUS LEVIATHAN INBOUND';
-    } else {
+    } else if (bossType === 'vortex') {
       overlay.classList.add('warning-vortex');
       if (subtext) subtext.textContent = 'VORTEX SINGULARITY INBOUND';
+    } else if (bossType === 'centipede') {
+      overlay.classList.add('warning-centipede');
+      if (subtext) subtext.textContent = 'CENTIPEDE OVERLORD INBOUND';
+    } else {
+      overlay.classList.add('warning-kraken');
+      if (subtext) subtext.textContent = 'CYBER KRAKEN INBOUND';
     }
     
     overlay.style.display = 'flex';
@@ -5076,6 +6402,17 @@ class GameEngine {
     if (this.boss.type === 'leviathan') {
       // Explode all segments sequentially down to the tail
       this.boss.severSegment(0);
+    } else if (this.boss.type === 'centipede') {
+      this.boss.severSegment(0, this);
+      this.thrashingTails.forEach(tt => {
+        tt.life = 0;
+      });
+    } else if (this.boss.type === 'kraken') {
+      this.boss.tentacles.forEach((tent, tIdx) => {
+        if (tent.segments.length > 0) {
+          this.boss.severTentacle(tIdx, 0, this);
+        }
+      });
     } else if (this.boss.type === 'vortex') {
       // Blast remaining shield blocks
       this.boss.shieldBlocks.forEach(sb => {
@@ -5094,12 +6431,21 @@ class GameEngine {
     }
 
     setTimeout(() => {
+      const isKraken = this.boss && this.boss.type === 'kraken';
       this.boss = null;
       this.dom.bossHud.style.opacity = '0';
       setTimeout(() => { this.dom.bossHud.style.display = 'none'; }, 500);
       
       window.audio.playBgm('normal');
       window.audio.playSe('se_fever');
+      
+      if (isKraken) {
+        this.loopCount++;
+        this.synergySplashText = "LOOP " + this.loopCount + " INITIALIZED";
+        this.synergySplashTimer = 2200;
+        this.triggerFlash('hit');
+      }
+      
       this.bossScoreMilestone = this.score + 35000;
     }, 1800);
   }
@@ -5268,6 +6614,14 @@ class GameEngine {
       newEnemy = new HexEnemy(x, y, type);
     }
     
+    if (this.loopCount > 1) {
+      newEnemy.hp = Math.ceil(newEnemy.hp * (1 + (this.loopCount - 1) * 0.45));
+      newEnemy.speed *= (1 + (this.loopCount - 1) * 0.15);
+      if (newEnemy.scoreVal) {
+        newEnemy.scoreVal = Math.ceil(newEnemy.scoreVal * (1 + (this.loopCount - 1) * 0.3));
+      }
+    }
+    
     this.enemies.push(newEnemy);
   }
 
@@ -5332,6 +6686,11 @@ class GameEngine {
     // Draw V5 Decoys
     for (let i = 0; i < this.decoys.length; i++) {
       this.decoys[i].draw(this.ctx, camX, camY, this.width, this.height);
+    }
+    
+    // Draw Thrashing Tails
+    for (let i = 0; i < this.thrashingTails.length; i++) {
+      this.thrashingTails[i].draw(this.ctx, camX, camY, this.width, this.height);
     }
     
     // Draw V5 Tesla Arcs (Lightning Lines)
@@ -5695,6 +7054,10 @@ class GameEngine {
   updateHUD() {
     this.displayScore = Math.floor(Vec.lerp(this.displayScore, this.score, 0.1));
     this.dom.score.textContent = this.displayScore.toLocaleString('en-US', { minimumIntegerDigits: 6, useGrouping: false });
+    
+    if (this.dom.loop) {
+      this.dom.loop.textContent = this.loopCount.toString().padStart(2, '0');
+    }
     
     this.dom.levelLabel.textContent = `LEVEL ${this.player.level.toString().padStart(2, '0')}`;
     
